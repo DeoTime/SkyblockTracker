@@ -316,7 +316,7 @@ export function mockDashboard(username: string, range: RangeKey): DashboardRespo
     stats,
     profitSeries: buildSeries(flips, cutoff),
     byItem: buildByItem(flips),
-    recentFlips: flips.slice(0, 12).map(strip),
+    recentFlips: flips.slice(0, 500).map(strip),
   };
 }
 

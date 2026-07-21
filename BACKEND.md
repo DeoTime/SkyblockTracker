@@ -83,16 +83,17 @@ coins). All timestamps are **ISO-8601 UTC strings**. The authoritative types are
     { "itemId": "GEMSTONE_GAUNTLET", "itemName": "Gemstone Gauntlet",
       "flips": 11, "netProfit": 54800000, "avgMarginPct": 27.9, "revenue": 623000000 }
   ],
-  "recentFlips": [ /* FlipSummary[], newest first, cap ~12 */ ]
+  "recentFlips": [ /* FlipSummary[], newest first, every flip in range (cap 500) */ ]
 }
 ```
 
 `profitSeries` must include **every day in the range including zero-profit days** —
 the chart plots by index and will distort if days are omitted.
 
-`recentFlips` is a **preview**, not the history. `stats.flipCount` is the true
-count and the UI renders "showing 12 of 78" against it, so the two must agree.
-Full history comes from the next endpoint.
+`recentFlips` carries **every flip in the range** — the dashboard table renders
+the lot and sorts client-side. The 500 cap exists only so a prolific seller
+cannot produce an unbounded payload; past it the UI falls back to the paginated
+endpoint below, and `stats.flipCount` remains the true total either way.
 
 ### `GET /api/players/:username/flips?range=&page=&pageSize=`
 

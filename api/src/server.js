@@ -96,7 +96,10 @@ async function dashboard(username, range) {
     stats: summarize(flips),
     profitSeries: profitSeries(flips, from || undefined),
     byItem: byItem(flips),
-    recentFlips: flips.slice(0, 12),
+    // The dashboard table shows every flip in the range, not a preview. Capped
+    // only so a prolific seller cannot produce an unbounded payload; past that
+    // the "View all" link takes over the paginated endpoint.
+    recentFlips: flips.slice(0, 500),
   };
 }
 

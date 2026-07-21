@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import type { FlipSummary } from '../api/types';
 import {
   coins,
-  duration,
   exactCoins,
   priceSourceLabel,
   shortDate,
@@ -12,7 +11,7 @@ import {
   titleCase,
 } from '../lib/format';
 
-type SortKey = 'soldAt' | 'netProfit' | 'profitPct' | 'salePrice';
+type SortKey = 'itemName' | 'soldAt' | 'costBasis' | 'salePrice' | 'ahFees' | 'netProfit' | 'profitPct';
 
 interface Props {
   flips: FlipSummary[];
@@ -30,15 +29,20 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
   if (flips.length === 0) return <div className="state">No flips recorded yet.</div>;
 
   const sorted = [...flips].sort((a, b) => {
+    // Item is the one text column; the rest are numeric or a date.
+    if (sort === 'itemName') {
+      const c = a.itemName.localeCompare(b.itemName);
+      return desc ? -c : c;
+    }
     const av = sort === 'soldAt' ? +new Date(a.soldAt) : a[sort];
     const bv = sort === 'soldAt' ? +new Date(b.soldAt) : b[sort];
     return desc ? bv - av : av - bv;
   });
 
-  function header(key: SortKey, label: string) {
+  function header(key: SortKey, label: string, align: 'left' | 'num' = 'num') {
     const active = sort === key;
     return (
-      <th className="num">
+      <th className={align === 'num' ? 'num' : undefined}>
         <button
           className="btn-ghost"
           style={{
@@ -70,12 +74,11 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
       <table>
         <thead>
           <tr>
-            <th>Item</th>
+            {header('itemName', 'Item', 'left')}
             {header('soldAt', 'Sold')}
-            <th className="num">Held</th>
-            <th className="num">Cost basis</th>
+            {header('costBasis', 'Cost basis')}
             {header('salePrice', 'Sale')}
-            <th className="num">Fees</th>
+            {header('ahFees', 'Fees')}
             {header('netProfit', 'Net')}
             {header('profitPct', 'Margin')}
           </tr>
@@ -101,7 +104,6 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
                 </div>
               </td>
               <td className="num muted">{shortDate(f.soldAt)}</td>
-              <td className="num muted">{duration(f.craftedAt, f.soldAt)}</td>
               <td
                 className="num"
                 title={`${exactCoins(f.baseItemCost)} base item (${f.acquisition}) + ${exactCoins(f.upgradeCost)} upgrades`}

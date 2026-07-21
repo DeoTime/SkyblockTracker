@@ -30,7 +30,6 @@ export function Dashboard() {
       <div className="page-head">
         <div>
           <h1>{username}</h1>
-          <p className="sub">Craft-flip performance on the Auction House</p>
         </div>
 
         {/* Filters sit in one row above the charts. */}
@@ -75,32 +74,15 @@ export function Dashboard() {
 
           <div className="grid grid-kpi">
             <StatTile label="Flips sold" value={String(data.stats.flipCount)} note={`${coins(data.stats.grossRevenue)} gross revenue`} />
-            <StatTile
-              label="Win rate"
-              value={pct(data.stats.winRatePct, 0)}
-              note="share of flips that cleared their cost basis"
-            />
-            <StatTile
-              label="Avg margin"
-              value={pct(data.stats.avgMarginPct)}
-              note="net profit ÷ cost basis, per flip"
-            />
-            <StatTile
-              label="Coins / hour"
-              value={coins(data.stats.coinsPerHour)}
-              note="net profit ÷ total craft-to-sale hold time"
-            />
+            <StatTile label="Avg margin" value={pct(data.stats.avgMarginPct)} />
+            <StatTile label="Coins / hour" value={coins(data.stats.coinsPerHour)} />
           </div>
 
           <div className="card">
             <div className="card-head">
               <div>
                 <h2>Cumulative net profit</h2>
-                <p className="sub">Running total of realised profit, after AH fees.</p>
               </div>
-              <span className="card-note">
-                {pct(data.stats.confidencePct, 0)} priced from archived snapshots
-              </span>
             </div>
             <ProfitAreaChart points={data.profitSeries} />
           </div>
@@ -110,7 +92,6 @@ export function Dashboard() {
               <div className="card-head">
                 <div>
                   <h2>Net profit by item</h2>
-                  <p className="sub">Which crafts actually carried the range.</p>
                 </div>
               </div>
               <ItemProfitBars items={data.byItem} onSelect={(id) => navigate(`/item/${id}`)} />
@@ -120,7 +101,6 @@ export function Dashboard() {
               <div className="card-head">
                 <div>
                   <h2>Best single flip</h2>
-                  <p className="sub">Largest net profit in this range.</p>
                 </div>
               </div>
               {data.stats.bestFlip ? (
@@ -158,10 +138,6 @@ export function Dashboard() {
             <div className="card-head">
               <div>
                 <h2>Recent flips</h2>
-                <p className="sub">
-                  Showing the {data.recentFlips.length} most recent of {data.stats.flipCount}. A “~” marks a
-                  flip whose ingredient prices were estimated.
-                </p>
               </div>
               {data.stats.flipCount > data.recentFlips.length && (
                 <Link className="btn-ghost" to={`/u/${encodeURIComponent(username)}/flips?range=${range}`}>
