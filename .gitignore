@@ -4,3 +4,10 @@ dist
 .env.local
 *.tsbuildinfo
 .DS_Store
+
+# ingest service
+ingest/node_modules
+ingest/data
+*.db
+*.db-wal
+*.db-shm

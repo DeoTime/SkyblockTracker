@@ -1,0 +1,18 @@
+{
+  "name": "skyblock-ingest",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Continuous capture of Hypixel SkyBlock sales and prices. Keyless.",
+  "scripts": {
+    "start": "node src/index.js",
+    "stats": "node src/stats.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "prismarine-nbt": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

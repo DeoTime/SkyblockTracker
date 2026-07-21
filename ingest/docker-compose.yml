@@ -1,0 +1,60 @@
+# Deliberately isolated from anything else on this host (nerfchess).
+#
+#   - its own compose project name, so `docker compose down` here can never
+#     touch another stack
+#   - its own bridge network, not the default one
+#   - a named volume rather than a bind mount into shared paths
+#   - NO published ports: the ingest is outbound-only, nothing needs to reach it
+#   - capped memory and CPU so a runaway loop cannot starve the host
+#   - log rotation, because this thing runs forever
+#
+# Run from this directory:
+#   docker compose up -d --build
+#   docker compose logs -f
+#   docker compose exec ingest npm run stats
+
+name: skyblock-tracker
+
+services:
+  ingest:
+    build: .
+    image: skyblock-ingest:latest
+    container_name: skyblock-ingest
+    restart: unless-stopped
+
+    environment:
+      # s_floW, cloudyv2 — override to track a different set.
+      TRACKED_UUIDS: "826bf8088bf9406a88b1bf2242f1d317,b7e55bf27a754acc9f105cb5472a6997"
+      # Snapshots do not overlap, so stay well under the 60s rotation.
+      ENDED_INTERVAL_MS: "20000"
+      BAZAAR_INTERVAL_MS: "60000"
+      DB_PATH: /data/skyblock.db
+      TZ: UTC
+
+    volumes:
+      - skyblock-data:/data
+
+    networks:
+      - skyblock
+
+    mem_limit: 512m
+    cpus: 0.5
+    pids_limit: 128
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  skyblock:
+    name: skyblock-net
+    driver: bridge
+
+volumes:
+  skyblock-data:
+    name: skyblock-data
