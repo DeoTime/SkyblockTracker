@@ -171,25 +171,55 @@ export async function fetchNeuItem(itemId) {
   return p;
 }
 
-export function parseRecipe(item) {
-  const grid = item?.recipe ?? item?.recipes?.[0];
-  if (!grid) return null;
+/** Grid slot keys are A1..C3; everything else on the object is metadata. */
+const RECIPE_META = new Set(['count', 'type', 'overrideOutputId', 'duration']);
+
+function parseOne(grid) {
+  if (!grid || typeof grid !== 'object') return null;
 
   const ingredients = new Map();
-  for (const [slot, raw] of Object.entries(grid)) {
-    if (slot === 'count' || slot === 'type' || slot === 'overrideOutputId') continue;
-    if (typeof raw !== 'string' || raw.length === 0) continue;
-
+  const add = (raw) => {
+    if (typeof raw !== 'string' || raw.length === 0) return;
     // "ENCHANTED_DIAMOND:32", and ids may carry a ";variant" suffix.
+    // Forge quantities come through as floats ("REFINED_MINERAL:32.0").
     const [idPart, qtyPart] = raw.split(':');
     const id = idPart.split(';')[0];
-    if (!id) continue;
+    if (!id) return;
     // One ingredient can occupy several grid slots; each contributes.
     ingredients.set(id, (ingredients.get(id) ?? 0) + (Number(qtyPart) || 1));
+  };
+
+  if (Array.isArray(grid.inputs)) {
+    // Forge recipe: a flat inputs array rather than a 3x3 grid. Divan's armour,
+    // Gemstone Mixture and Powder Coating are all forge-only, and treating them
+    // as recipe-less made the tracker price their base at market — which, for a
+    // flip held under an hour, is the seller's own sale price.
+    for (const raw of grid.inputs) add(raw);
+  } else {
+    for (const [slot, raw] of Object.entries(grid)) {
+      if (RECIPE_META.has(slot)) continue;
+      add(raw);
+    }
   }
 
   if (ingredients.size === 0) return null;
   return { ingredients, outputCount: Number(grid.count ?? 1) || 1 };
+}
+
+/**
+ * NEU stores either a single `recipe` (crafting grid) or a `recipes` array,
+ * which may hold forge entries. Take the first that yields ingredients.
+ */
+export function parseRecipe(item) {
+  const candidates = [];
+  if (item?.recipe) candidates.push(item.recipe);
+  if (Array.isArray(item?.recipes)) candidates.push(...item.recipes);
+
+  for (const c of candidates) {
+    const parsed = parseOne(c);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 /**

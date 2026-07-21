@@ -18,7 +18,11 @@ export interface NeuItem {
   displayname?: string;
   /** 3×3 grid, slots A1..C3, values "ITEM_ID:count". `count` = output quantity. */
   recipe?: Record<string, string | number>;
-  recipes?: Record<string, string | number>[];
+  /**
+   * May hold either grid recipes or forge ones. A forge entry has
+   * `type: "forge"` and a flat `inputs: ["ITEM_ID:qty", …]` instead of slots.
+   */
+  recipes?: Record<string, string | number | string[]>[];
 }
 
 const cache = new Map<string, NeuItem | null>();
@@ -54,26 +58,57 @@ export interface ParsedRecipe {
   outputCount: number;
 }
 
-export function parseRecipe(item: NeuItem | null): ParsedRecipe | null {
-  const grid = item?.recipe ?? item?.recipes?.[0];
-  if (!grid) return null;
+/** Grid slot keys are A1..C3; everything else on the object is metadata. */
+const RECIPE_META = new Set(['count', 'type', 'overrideOutputId', 'duration']);
+
+type RecipeGrid = Record<string, string | number | string[]>;
+
+function parseOne(grid: RecipeGrid | undefined): ParsedRecipe | null {
+  if (!grid || typeof grid !== 'object') return null;
 
   const ingredients = new Map<string, number>();
-  for (const [slot, raw] of Object.entries(grid)) {
-    if (slot === 'count' || slot === 'type' || slot === 'overrideOutputId') continue;
-    if (typeof raw !== 'string' || raw.length === 0) continue;
-
-    // "ENCHANTED_DIAMOND:32" — and ids can carry a ";variant" suffix.
+  const add = (raw: unknown) => {
+    if (typeof raw !== 'string' || raw.length === 0) return;
+    // "ENCHANTED_DIAMOND:32" — ids can carry a ";variant" suffix, and forge
+    // quantities arrive as floats ("REFINED_MINERAL:32.0").
     const [idPart, qtyPart] = raw.split(':');
     const id = idPart.split(';')[0];
-    if (!id) continue;
+    if (!id) return;
     // The same ingredient occupies several slots; each slot contributes.
     ingredients.set(id, (ingredients.get(id) ?? 0) + (Number(qtyPart) || 1));
+  };
+
+  const inputs = (grid as { inputs?: unknown }).inputs;
+  if (Array.isArray(inputs)) {
+    // Forge recipe: a flat inputs array rather than a 3x3 grid. Divan's armour,
+    // Gemstone Mixture and Powder Coating are forge-only, and treating them as
+    // recipe-less prices the base at market instead of at what it cost to make.
+    for (const raw of inputs) add(raw);
+  } else {
+    for (const [slot, raw] of Object.entries(grid)) {
+      if (RECIPE_META.has(slot)) continue;
+      add(raw);
+    }
   }
 
   if (ingredients.size === 0) return null;
-  const outputCount = Number(grid.count ?? 1) || 1;
-  return { ingredients, outputCount };
+  return { ingredients, outputCount: Number(grid.count ?? 1) || 1 };
+}
+
+/**
+ * NEU stores either a single `recipe` (crafting grid) or a `recipes` array,
+ * which may hold forge entries. Take the first that yields ingredients.
+ */
+export function parseRecipe(item: NeuItem | null): ParsedRecipe | null {
+  const candidates: RecipeGrid[] = [];
+  if (item?.recipe) candidates.push(item.recipe as RecipeGrid);
+  if (Array.isArray(item?.recipes)) candidates.push(...(item.recipes as RecipeGrid[]));
+
+  for (const c of candidates) {
+    const parsed = parseOne(c);
+    if (parsed) return parsed;
+  }
+  return null;
 }
 
 export type CostSource = 'craft' | 'bazaar' | 'auction';
