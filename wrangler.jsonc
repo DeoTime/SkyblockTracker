@@ -1,0 +1,21 @@
+{
+  // Static-assets-only Worker: no "main", so there is no Worker script.
+  //
+  // That is why the dashboard refuses to let you add runtime variables — there
+  // is nothing to read them. It does not matter here: VITE_USE_MOCKS and every
+  // other VITE_* value is substituted into the bundle by Vite at BUILD time.
+  // Set those under Workers Builds -> build configuration -> Build variables,
+  // NOT under Settings -> Variables & Secrets.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "skyblock-tracker",
+  "compatibility_date": "2026-07-21",
+
+  "assets": {
+    "directory": "./dist",
+
+    // The app uses client-side routing, so /u/s_floW/flips is not a real file.
+    // Without this, deep links and refreshes 404. This is the Workers
+    // equivalent of a _redirects SPA fallback.
+    "not_found_handling": "single-page-application"
+  }
+}
