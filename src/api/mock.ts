@@ -138,16 +138,24 @@ const RECIPES: RecipeDef[] = [
 
 /* ---------- AH fee model (mirrors the backend's versioned fee table) ---------- */
 
+/**
+ * Claim tax is a flat 1%; it is the LISTING fee that is tiered — 1% under 10M,
+ * 2% to 100M, 2.5% above. Keep in step with computeFees in api/src/flips.js.
+ */
 export function ahFees(salePrice: number, bin: boolean): { fees: { label: string; amount: number }[]; total: number } {
-  let rate = 0.01;
-  if (salePrice >= 100_000_000) rate = 0.025;
-  else if (salePrice >= 1_000_000) rate = 0.02;
+  let listingRate = 0.01;
+  if (salePrice >= 100_000_000) listingRate = 0.025;
+  else if (salePrice >= 10_000_000) listingRate = 0.02;
 
-  const claiming = Math.round(salePrice * rate);
-  const listing = bin ? Math.round(salePrice * 0.001) : 0;
+  const claiming = Math.round(salePrice * 0.01);
+  const listing = Math.round(salePrice * listingRate);
   const fees = [
-    { label: `Claiming tax (${(rate * 100).toFixed(1)}%)`, amount: claiming },
-    ...(listing > 0 ? [{ label: 'BIN listing fee (0.1%)', amount: listing }] : []),
+    { label: 'Claiming tax (1.0%)', amount: claiming },
+    {
+      // Charged on the listed price; for non-BIN we only know the hammer price.
+      label: `Listing fee (${(listingRate * 100).toFixed(1)}%)${bin ? '' : ', estimated on sale price'}`,
+      amount: listing,
+    },
   ];
   return { fees, total: claiming + listing };
 }

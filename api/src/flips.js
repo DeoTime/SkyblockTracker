@@ -10,35 +10,47 @@ import { PriceBook, costOf, itemMetadata } from './prices.js';
  */
 
 /**
- * Versioned so historical flips keep the rates that were in force when they
- * sold. These are the frontend mock's placeholders — BACKEND.md §8 flags them
- * as unverified against live game behaviour. Confirm in game before treating
- * fee figures as exact; the profit sign is unaffected at these magnitudes.
+ * Two separate charges, and it is the LISTING fee that is tiered — not the
+ * claim tax. An earlier version had this inverted (tiered tax at a 1M
+ * boundary, flat 0.1% listing), which understated fees on everything above
+ * 10M.
+ *
+ *   claim tax     flat 1% of the sale, taken when you collect the coins
+ *   listing fee   1% under 10M, 2% from 10M to 100M, 2.5% above 100M
+ *
+ * Versioned by effective date so historical flips keep the rates that were in
+ * force when they sold — Hypixel has changed AH fees before, and a single
+ * hardcoded rate silently corrupts old figures the next time they do.
  */
 const FEE_SCHEDULE = [
   {
     from: 0,
-    tiers: [
-      { min: 100_000_000, rate: 0.025, label: 'Claiming tax (2.5%)' },
-      { min: 1_000_000, rate: 0.02, label: 'Claiming tax (2.0%)' },
-      { min: 0, rate: 0.01, label: 'Claiming tax (1.0%)' },
+    claimTax: { rate: 0.01, label: 'Claiming tax (1.0%)' },
+    listingTiers: [
+      { min: 100_000_000, rate: 0.025, label: 'Listing fee (2.5%)' },
+      { min: 10_000_000, rate: 0.02, label: 'Listing fee (2.0%)' },
+      { min: 0, rate: 0.01, label: 'Listing fee (1.0%)' },
     ],
-    binListing: { rate: 0.001, label: 'BIN listing fee (0.1%)' },
   },
 ];
 
+/**
+ * The listing fee is charged on the price you LIST at, not the price it sells
+ * for. For BIN those are the same number. For a bidding auction the starting
+ * bid is usually lower than the hammer price, and we do not record it — so
+ * this overstates the fee on non-BIN sales. Every tracked flip so far is BIN.
+ */
 export function computeFees(salePrice, bin, soldAt) {
   const schedule = FEE_SCHEDULE.filter((s) => s.from <= soldAt).at(-1) ?? FEE_SCHEDULE[0];
-  const tier = schedule.tiers.find((t) => salePrice >= t.min);
+  const tier = schedule.listingTiers.find((t) => salePrice >= t.min);
 
-  const fees = [{ label: tier.label, amount: Math.round(salePrice * tier.rate) }];
-  if (bin) {
-    fees.push({
-      label: schedule.binListing.label,
-      amount: Math.round(salePrice * schedule.binListing.rate),
-    });
-  }
-  return fees;
+  return [
+    { label: schedule.claimTax.label, amount: Math.round(salePrice * schedule.claimTax.rate) },
+    {
+      label: bin ? tier.label : `${tier.label}, estimated on sale price`,
+      amount: Math.round(salePrice * tier.rate),
+    },
+  ];
 }
 
 const RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC', 'DIVINE', 'SPECIAL', 'VERY_SPECIAL'];

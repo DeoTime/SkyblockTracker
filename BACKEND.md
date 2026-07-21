@@ -650,10 +650,21 @@ profit curve meaningless.
 Net profit is `salePrice - fees - craftCost`. Fees have two parts: a claiming tax
 on sale, and a listing fee.
 
-⚠ **Verify the current rates in game before trusting them.** The values baked into
-the frontend mock (1% base, 2% at 1M+, 2.5% at 100M+, plus a 0.1% BIN listing fee)
-are placeholders for demo data, not researched constants, and Hypixel has changed
-AH fees more than once. Confirm against current game behavior, then:
+| charge | rate |
+|---|---|
+| Claiming tax | flat **1%** of the sale |
+| Listing fee | **1%** under 10M · **2%** from 10M to 100M · **2.5%** above 100M |
+
+The tiering is on the **listing fee**, not the tax. An earlier draft here had it
+inverted — a tiered claim tax with a 1M boundary plus a flat 0.1% BIN listing
+fee — which understated fees on every sale above 10M.
+
+The listing fee applies to the price you **list** at, not the price it fetches.
+For BIN they are the same; for a bidding auction the starting bid is normally
+lower than the hammer price, and the ended-auctions feed does not carry it, so
+that case is an over-estimate.
+
+Hypixel has changed AH fees before, so:
 
 - Put the rates in a **versioned table with effective dates** (`fee_schedule`), and
   price each flip with the schedule in force at `soldAt`. A single hardcoded rate
