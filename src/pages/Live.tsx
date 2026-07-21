@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import {
-  computeSpreads,
-  getBazaar,
-  getPlayerAuctions,
-  resolveUuid,
-  type BazaarSpread,
-} from '../api/hypixel';
-import { getApiKey } from '../lib/apiKey';
+import { computeSpreads, getBazaar, type BazaarSpread } from '../api/hypixel';
+import { fetchPlayerAuctions } from '../api/client';
 import { coins, exactCoins, pct, unitPrice } from '../lib/format';
 import { ErrorState, Loading } from '../components/Layout';
 import { StatTile } from '../components/Stat';
@@ -182,18 +175,17 @@ function PlayerAuctionsPanel() {
   const [error, setError] = useState<Error | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const key = getApiKey();
-
   async function run() {
-    if (!key || !username.trim()) return;
+    if (!username.trim()) return;
     setLoading(true);
     setError(null);
     setRows(null);
     try {
-      const profile = await resolveUuid(username.trim());
-      setResolved(profile.name);
-      const data = await getPlayerAuctions(profile.id, key);
-      setRows(data.auctions ?? []);
+      // The server holds the key and makes the keyed call; the browser never
+      // sees one. A missing key surfaces as a readable 503 from the API.
+      const data = await fetchPlayerAuctions(username.trim());
+      setResolved(data.player.username);
+      setRows(data.auctions);
     } catch (e) {
       setError(e as Error);
     } finally {
@@ -207,17 +199,13 @@ function PlayerAuctionsPanel() {
         <div>
           <h2>A player's auctions</h2>
           <p className="sub">
-            Uses <code>/v2/skyblock/auction?player=</code>, which requires a key.
+            Server-side <code>/v2/skyblock/auction?player=</code> using the installed key. Returns
+            unclaimed auctions only — this is what is in flight, not a sales history.
           </p>
         </div>
       </div>
 
-      {!key ? (
-        <div className="state">
-          No API key stored. <Link className="link" to="/settings">Add one</Link> to use this panel.
-        </div>
-      ) : (
-        <>
+      <>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
               className="input"
@@ -279,8 +267,7 @@ function PlayerAuctionsPanel() {
               </p>
             </div>
           )}
-        </>
-      )}
+      </>
     </div>
   );
 }

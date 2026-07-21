@@ -9,6 +9,15 @@
 #   cloudflared access login https://ssh-chicago.nerfchess.com
 #
 # Usage:  ./deploy.sh [ssh-host]      default host: nerfchess
+#
+# ADMIN_PASSWORD gates POST /api/key, the only write endpoint. It is read from
+# the environment and never stored in this repo:
+#
+#   ADMIN_PASSWORD='…' ./deploy.sh nerfchess
+#
+# Leaving it unset FAILS CLOSED — /api/key returns 503 and no key can be
+# installed. That is the safe default for a routine redeploy, but it also means
+# a redeploy without it turns key updates off until you pass it again.
 set -euo pipefail
 
 HOST="${1:-nerfchess}"
@@ -44,7 +53,9 @@ ssh "$HOST" "docker run -d \
   -v skyblock-data:/data \
   -p ${BIND}:${PORT}:4000 \
   -e DB_PATH=/data/skyblock.db \
+  -e SETTINGS_PATH=/data/settings.db \
   -e CORS_ORIGIN='${CORS_ORIGIN:-*}' \
+  -e ADMIN_PASSWORD='${ADMIN_PASSWORD:-}' \
   -e TZ=UTC \
   --memory 512m \
   --cpus 0.5 \

@@ -2,6 +2,15 @@ import http from 'node:http';
 import Database from 'better-sqlite3';
 import { buildFlip, summarize, profitSeries, byItem, rangeStart } from './flips.js';
 import { itemMetadata } from './prices.js';
+import { sweep, playerAuctions } from './sweep.js';
+import {
+  openSettings,
+  makeSettingsStore,
+  passwordOk,
+  writeEnabled,
+  looksLikeKey,
+  verifyKey,
+} from './settings.js';
 
 /**
  * Read API over the ingest database. No framework: two dependencies is the
@@ -12,12 +21,15 @@ import { itemMetadata } from './prices.js';
  */
 
 const DB_PATH = process.env.DB_PATH ?? '/data/skyblock.db';
+const SETTINGS_PATH = process.env.SETTINGS_PATH ?? '/data/settings.db';
 const PORT = Number(process.env.PORT ?? 4000);
 const HOST = process.env.HOST ?? '0.0.0.0';
 const ORIGIN = process.env.CORS_ORIGIN ?? '*';
 
 const db = new Database(DB_PATH, { readonly: true, fileMustExist: true });
 db.pragma('journal_mode = WAL'); // read the ingest's in-flight WAL, not a stale snapshot
+
+const settings = makeSettingsStore(openSettings(SETTINGS_PATH));
 
 /* ---- player identity ---------------------------------------------- */
 
@@ -166,6 +178,69 @@ class HttpError extends Error {
   }
 }
 
+/** Bounded so an oversized body cannot be used to exhaust memory. */
+function readJsonBody(req, limit = 4096) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) {
+        reject(new HttpError(413, 'Request body too large.'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => {
+      try {
+        resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
+      } catch {
+        reject(new HttpError(400, 'Body was not valid JSON.'));
+      }
+    });
+    req.on('error', () => reject(new HttpError(400, 'Could not read the request body.')));
+  });
+}
+
+/**
+ * Install a new Hypixel key.
+ *
+ * Two gates, in this order: the shared password, then Hypixel itself. The
+ * client also validates, but a client check only reports what the client
+ * claims — what gets persisted has to be a key THIS server watched Hypixel
+ * accept.
+ */
+async function putApiKey(req) {
+  if (!writeEnabled()) {
+    throw new HttpError(503, 'Key updates are disabled: the server has no ADMIN_PASSWORD set.');
+  }
+
+  const body = await readJsonBody(req);
+  if (!passwordOk(body.password)) throw new HttpError(401, 'Wrong password.');
+
+  const key = typeof body.key === 'string' ? body.key.trim() : '';
+  if (!looksLikeKey(key)) {
+    throw new HttpError(400, 'That does not look like a Hypixel key — they are UUIDs, e.g. 1a2b3c4d-….');
+  }
+
+  // verifyKey throws plain Errors with user-facing text. Promote them to
+  // HttpError so they reach the client instead of the 500 catch-all.
+  let playerCount;
+  try {
+    ({ playerCount } = await verifyKey(key));
+  } catch (e) {
+    throw new HttpError(400, e.message);
+  }
+
+  settings.setApiKey(key);
+
+  return {
+    ...settings.apiKeyStatus(),
+    message: `Key accepted and stored. Hypixel reports ${playerCount.toLocaleString('en-US')} players online.`,
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const send = (status, body) => {
@@ -180,17 +255,47 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': ORIGIN,
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Accept, Content-Type',
     });
     return res.end();
   }
-  if (req.method !== 'GET') return send(405, { error: 'Only GET is supported.' });
 
   const p = url.pathname.replace(/^\/api/, '').replace(/\/+$/, '') || '/';
   const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
 
+  // POST exists only to install a key; everything else is a read.
+  if (req.method === 'POST' && p !== '/key') {
+    return send(405, { error: 'Only GET is supported on this endpoint.' });
+  }
+  if (req.method !== 'GET' && req.method !== 'POST') {
+    return send(405, { error: 'Only GET and POST are supported.' });
+  }
+
   try {
+    if (p === '/key') {
+      if (req.method === 'POST') return send(200, await putApiKey(req));
+      // Status only — the key itself is never sent back over the wire.
+      return send(200, { ...settings.apiKeyStatus(), writable: writeEnabled() });
+    }
+
+    if (p === '/sweep') {
+      const list = (name) => (url.searchParams.get(name) ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+      return send(200, await sweep({
+        sellers: list('sellers'),
+        names: list('names'),
+        excludeSellers: list('excludeSellers'),
+      }));
+    }
+
+    if (seg[0] === 'players' && seg[2] === 'auctions') {
+      const key = settings.apiKey();
+      if (!key) throw new HttpError(503, 'No Hypixel key is installed. Add one on the settings page.');
+      const player = await resolvePlayer(seg[1]);
+      if (!player) throw new HttpError(404, `No Minecraft account named "${seg[1]}".`);
+      return send(200, { player, auctions: await playerAuctions(player.uuid, key) });
+    }
+
     if (p === '/health') {
       const { c } = db.prepare('SELECT COUNT(*) c FROM tracked_sales').get();
       return send(200, { ok: true, trackedSales: c });
