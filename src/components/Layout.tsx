@@ -39,9 +39,6 @@ export function Layout({ children }: { children: ReactNode }) {
           SkyBlock Flip Tracker
         </Link>
         <div className="topbar-spacer" />
-        <NavLink to="/tracked" className="btn-ghost">
-          Tracked
-        </NavLink>
         <NavLink to="/settings" className="btn-ghost">
           API key
         </NavLink>

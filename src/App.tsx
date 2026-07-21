@@ -5,7 +5,6 @@ import { Dashboard } from './pages/Dashboard';
 import { AllFlips } from './pages/AllFlips';
 import { FlipDetail } from './pages/FlipDetail';
 import { ItemExplorer } from './pages/ItemExplorer';
-import { Tracked } from './pages/Tracked';
 import { Settings } from './pages/Settings';
 
 export function App() {
@@ -17,7 +16,6 @@ export function App() {
         <Route path="/u/:username/flips" element={<AllFlips />} />
         <Route path="/flip/:auctionUuid" element={<FlipDetail />} />
         <Route path="/item/:itemId" element={<ItemExplorer />} />
-        <Route path="/tracked" element={<Tracked />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

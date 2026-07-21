@@ -23,11 +23,6 @@ export function Landing() {
           ))}
         </div>
 
-        <p className="sub" style={{ marginTop: 22 }}>
-          <Link className="link" to="/tracked">
-            Scan live listings →
-          </Link>
-        </p>
       </div>
     </main>
   );
