@@ -1,0 +1,17 @@
+{
+  "name": "skyblock-api",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Read API over the ingest database. Serves the frontend contract in BACKEND.md §1.",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "prismarine-nbt": "^2.5.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
