@@ -11,11 +11,14 @@
 #   1. Zero Trust -> Networks -> Tunnels -> Create a tunnel -> Cloudflared
 #   2. Name it e.g. skyblock-api. Copy the connector TOKEN it shows you.
 #   3. Under "Public Hostnames", add:
-#        subdomain: skyblock-api        domain: <your zone>
+#        subdomain: api                 domain: wwolf.shop
 #        service:   http://skyblock-api:4000
-#      That hostname resolves on skyblock-net, which is why cloudflared has to
-#      join that network below.
-#   4. Optionally put an Access policy in front of it, same as ssh-chicago.
+#      "skyblock-api" there is the CONTAINER name on skyblock-net, which is why
+#      cloudflared has to join that network below. Cloudflare creates the DNS
+#      record for api.wwolf.shop itself.
+#   4. Do NOT put an Access policy on this hostname. Access answers with an SSO
+#      redirect, and a browser fetch() from the site cannot complete one — every
+#      dashboard would fail to load. ssh-chicago is gated; this must not be.
 #
 # Then:  TUNNEL_TOKEN=eyJ... ./tunnel.sh [ssh-host]
 #
@@ -57,9 +60,9 @@ hostname you configured in step 3.
 
 Then point the frontend at it and turn the mocks off:
 
-  # .env.local  (and the same two under Workers Builds -> Build variables)
+  # Workers Builds -> build configuration -> Build variables
   VITE_USE_MOCKS=false
-  VITE_API_BASE_URL=https://skyblock-api.<your zone>/api
+  VITE_API_BASE_URL=https://api.wwolf.shop/api
 
 VITE_* is substituted at BUILD time, so a rebuild is required — setting it in
 Settings -> Variables & Secrets does nothing for a static-assets Worker.
