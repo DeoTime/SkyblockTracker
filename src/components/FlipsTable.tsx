@@ -1,0 +1,129 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import type { FlipSummary } from '../api/types';
+import {
+  coins,
+  duration,
+  exactCoins,
+  priceSourceLabel,
+  shortDate,
+  signedCoins,
+  signedPct,
+  titleCase,
+} from '../lib/format';
+
+type SortKey = 'soldAt' | 'netProfit' | 'profitPct' | 'salePrice';
+
+interface Props {
+  flips: FlipSummary[];
+  showItemLink?: boolean;
+}
+
+/**
+ * The tabular view of the same data the charts encode — this is what makes the
+ * numbers readable without relying on color at all.
+ */
+export function FlipsTable({ flips, showItemLink = true }: Props) {
+  const [sort, setSort] = useState<SortKey>('soldAt');
+  const [desc, setDesc] = useState(true);
+
+  if (flips.length === 0) return <div className="state">No flips recorded yet.</div>;
+
+  const sorted = [...flips].sort((a, b) => {
+    const av = sort === 'soldAt' ? +new Date(a.soldAt) : a[sort];
+    const bv = sort === 'soldAt' ? +new Date(b.soldAt) : b[sort];
+    return desc ? bv - av : av - bv;
+  });
+
+  function header(key: SortKey, label: string) {
+    const active = sort === key;
+    return (
+      <th className="num">
+        <button
+          className="btn-ghost"
+          style={{
+            border: 0,
+            padding: '2px 4px',
+            font: 'inherit',
+            color: active ? 'var(--text-primary)' : 'inherit',
+            textTransform: 'inherit',
+            letterSpacing: 'inherit',
+          }}
+          onClick={() => {
+            if (active) setDesc((d) => !d);
+            else {
+              setSort(key);
+              setDesc(true);
+            }
+          }}
+          aria-sort={active ? (desc ? 'descending' : 'ascending') : 'none'}
+        >
+          {label}
+          {active ? (desc ? ' ↓' : ' ↑') : ''}
+        </button>
+      </th>
+    );
+  }
+
+  return (
+    <div className="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Item</th>
+            {header('soldAt', 'Sold')}
+            <th className="num">Held</th>
+            <th className="num">Cost basis</th>
+            {header('salePrice', 'Sale')}
+            <th className="num">Fees</th>
+            {header('netProfit', 'Net')}
+            {header('profitPct', 'Margin')}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((f) => (
+            <tr key={f.auctionUuid}>
+              <td>
+                <div className="item-cell">
+                  <Link to={`/flip/${f.auctionUuid}`} className="link">
+                    {f.itemName}
+                  </Link>
+                  {showItemLink && (
+                    <Link to={`/item/${f.itemId}`} className="pill" title="Price history for this item">
+                      {titleCase(f.rarity)}
+                    </Link>
+                  )}
+                  {f.priceSource !== 'own_snapshot' && (
+                    <span className="pill" title={priceSourceLabel(f.priceSource)}>
+                      ~
+                    </span>
+                  )}
+                </div>
+              </td>
+              <td className="num muted">{shortDate(f.soldAt)}</td>
+              <td className="num muted">{duration(f.craftedAt, f.soldAt)}</td>
+              <td
+                className="num"
+                title={`${exactCoins(f.baseItemCost)} base item (${f.acquisition}) + ${exactCoins(f.upgradeCost)} upgrades`}
+              >
+                {coins(f.costBasis)}
+                {f.unpricedUpgrades > 0 && (
+                  <span className="muted" title={`${f.unpricedUpgrades} upgrade(s) could not be priced`}>
+                    {' '}
+                    +?
+                  </span>
+                )}
+              </td>
+              <td className="num">{coins(f.salePrice)}</td>
+              <td className="num muted">{coins(f.ahFees)}</td>
+              <td className="num" style={{ fontWeight: 600, color: f.netProfit >= 0 ? 'var(--good-text)' : 'var(--critical)' }}>
+                {signedCoins(f.netProfit)}
+              </td>
+              <td className="num muted">{signedPct(f.profitPct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

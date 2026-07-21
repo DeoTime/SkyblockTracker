@@ -1,0 +1,102 @@
+/*
+ * Design tokens.
+ *
+ * Series and diverging hexes below were validated with the dataviz palette
+ * validator against both surfaces (light #fcfcfb / dark #1a1a19) — all six
+ * checks pass in both modes. Re-run the validator if any of them change.
+ */
+
+:root {
+  color-scheme: light;
+
+  --surface-1: #fcfcfb;
+  --page: #f9f9f7;
+
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+
+  --gridline: #e1e0d9;
+  --baseline: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --ghost: rgba(11, 11, 11, 0.04);
+
+  /* Categorical slots, in fixed order. Never cycled, never generated. */
+  --series-1: #2a78d6; /* blue   */
+  --series-2: #008300; /* green  */
+  --series-3: #e87ba4; /* magenta */
+  --series-4: #eda100; /* yellow */
+
+  /* Diverging poles for profit/loss. Blue↔red, not green↔red: the classic
+     green/red money pairing is precisely the red-green CVD failure case. */
+  --pos: #2a78d6;
+  --neg: #e34948;
+  --mid: #f0efec;
+
+  --good-text: #006300;
+  --critical: #d03b3b;
+  --warning: #fab219;
+
+  --radius: 10px;
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) {
+    color-scheme: dark;
+
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --ghost: rgba(255, 255, 255, 0.06);
+
+    --series-1: #3987e5;
+    --series-2: #008300;
+    --series-3: #d55181;
+    --series-4: #c98500;
+
+    --pos: #3987e5;
+    --neg: #e66767;
+    --mid: #383835;
+
+    --good-text: #0ca30c;
+    --critical: #d03b3b;
+    --warning: #fab219;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-1: #1a1a19;
+  --page: #0d0d0d;
+
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+
+  --gridline: #2c2c2a;
+  --baseline: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --ghost: rgba(255, 255, 255, 0.06);
+
+  --series-1: #3987e5;
+  --series-2: #008300;
+  --series-3: #d55181;
+  --series-4: #c98500;
+
+  --pos: #3987e5;
+  --neg: #e66767;
+  --mid: #383835;
+
+  --good-text: #0ca30c;
+  --critical: #d03b3b;
+  --warning: #fab219;
+}
