@@ -7,7 +7,6 @@ import {
   duration,
   exactCoins,
   fullDate,
-  pct,
   priceSourceLabel,
   signedCoins,
   signedPct,
@@ -23,10 +22,6 @@ export function FlipDetail() {
   if (!flip) return null;
 
   const maxIngredient = Math.max(...flip.ingredients.map((i) => i.totalPrice), 1);
-  const currentSpread =
-    flip.currentMarketPrice !== null && flip.currentCraftCost !== null
-      ? flip.currentMarketPrice - flip.currentCraftCost
-      : null;
 
   return (
     <main className="container">
@@ -70,7 +65,6 @@ export function FlipDetail() {
             <div className="card-head">
               <div>
                 <h2>Craft cost at {fullDate(flip.craftedAt)}</h2>
-                <p className="sub">What each ingredient cost the day this item was made.</p>
               </div>
             </div>
 
@@ -172,8 +166,7 @@ export function FlipDetail() {
           <div className="card">
             <div className="card-head">
               <div>
-                <h2>Sale and fees</h2>
-                <p className="sub">What the Auction House actually paid out.</p>
+                <h2>AH fees</h2>
               </div>
             </div>
 
@@ -210,66 +203,6 @@ export function FlipDetail() {
           </div>
         </div>
 
-        <div className="grid grid-2">
-          <div className="card">
-            <div className="card-head">
-              <h2>Timeline</h2>
-            </div>
-            <div>
-              <div className="breakdown-row">
-                <span className="breakdown-name">Crafted</span>
-                <span className="breakdown-val">{fullDate(flip.craftedAt)}</span>
-              </div>
-              <div className="breakdown-row">
-                <span className="breakdown-name">Listed</span>
-                <span className="breakdown-val">{fullDate(flip.listedAt)}</span>
-              </div>
-              <div className="breakdown-row">
-                <span className="breakdown-name">Sold</span>
-                <span className="breakdown-val">{fullDate(flip.soldAt)}</span>
-              </div>
-              <div className="total-row">
-                <span>Total hold</span>
-                <span>{duration(flip.craftedAt, flip.soldAt)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head">
-              <div>
-                <h2>Would it still work today?</h2>
-                <p className="sub">Current craft cost against the current market price.</p>
-              </div>
-            </div>
-            <div>
-              <div className="breakdown-row">
-                <span className="breakdown-name">Craft cost now</span>
-                <span className="breakdown-val">
-                  {flip.currentCraftCost !== null ? exactCoins(flip.currentCraftCost) : '—'}
-                </span>
-              </div>
-              <div className="breakdown-row">
-                <span className="breakdown-name">Market price now</span>
-                <span className="breakdown-val">
-                  {flip.currentMarketPrice !== null ? exactCoins(flip.currentMarketPrice) : '—'}
-                </span>
-              </div>
-              <div className="total-row">
-                <span>Spread before fees</span>
-                <span style={{ color: (currentSpread ?? 0) >= 0 ? 'var(--good-text)' : 'var(--critical)' }}>
-                  {currentSpread !== null ? signedCoins(currentSpread) : '—'}
-                </span>
-              </div>
-              {currentSpread !== null && flip.currentCraftCost ? (
-                <p className="sub" style={{ marginTop: 10 }}>
-                  That is {pct((currentSpread / flip.currentCraftCost) * 100)} against craft cost, versus{' '}
-                  {pct(flip.profitPct)} when you actually ran it.
-                </p>
-              ) : null}
-            </div>
-          </div>
-        </div>
       </div>
     </main>
   );
