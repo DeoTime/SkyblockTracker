@@ -4,23 +4,37 @@ Continuous capture of Hypixel SkyBlock sales and bazaar prices. Runs forever,
 needs no API key, and is the one component whose data **cannot be recreated
 later** — see "Why this must run first".
 
-## Deploy (Chicago)
+## Deploy (Chicago) — currently live
 
-The host sits behind Cloudflare Access, so authenticate first — this opens a
-browser and cannot be automated:
+The host sits behind Cloudflare Access, so authenticate first. This opens a
+browser and cannot be scripted:
 
 ```bash
 cloudflared access login https://ssh-chicago.nerfchess.com
 ```
 
-Then:
+Then, from this directory:
 
 ```bash
-scp -r ingest nerfchess:~/skyblock-ingest
-ssh nerfchess
-cd ~/skyblock-ingest
-docker compose up -d --build
-docker compose logs -f
+./deploy.sh            # packages, uploads, builds, restarts, verifies
+```
+
+**That host has Docker 26.1.3 with no compose plugin**, and it already runs
+nerfchess, so `deploy.sh` uses plain `docker` rather than installing packages on
+it. The flags reproduce `docker-compose.yml` exactly — if you ever add the
+compose plugin, `docker compose up -d --build` gives the identical container.
+
+The host is **aarch64**, so `node_modules` is never uploaded; `better-sqlite3`
+compiles inside the build stage (~3 minutes).
+
+`deploy.sh` removes and recreates the container, but the `skyblock-data` volume
+is untouched, so redeploying never loses captured history.
+
+### Operating
+
+```bash
+ssh nerfchess 'docker logs -f skyblock-ingest'
+ssh nerfchess 'docker exec skyblock-ingest npm run --silent stats'
 ```
 
 ## Isolation from the existing stack
