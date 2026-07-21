@@ -1,7 +1,7 @@
 /**
  * The Hypixel API key lives on the server, not in this browser.
  *
- * It used to sit in localStorage so the Live view could call keyed endpoints
+ * It used to sit in localStorage so the browser could call keyed endpoints
  * before a backend existed. That meant every visitor needed their own key, and
  * the key was readable by anything running on the page. Now the operator
  * installs one key on the box and nobody else ever supplies one — see

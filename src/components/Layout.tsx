@@ -42,9 +42,6 @@ export function Layout({ children }: { children: ReactNode }) {
         <NavLink to="/tracked" className="btn-ghost">
           Tracked
         </NavLink>
-        <NavLink to="/live" className="btn-ghost">
-          Live
-        </NavLink>
         <NavLink to="/settings" className="btn-ghost">
           API key
         </NavLink>

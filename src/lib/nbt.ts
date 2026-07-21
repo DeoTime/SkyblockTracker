@@ -3,8 +3,8 @@
  * auction's `item_bytes`. No dependency — the format is small and we only ever
  * read, never write.
  *
- * The backend should use `prismarine-nbt` instead; this exists so the Live view
- * can demonstrate upgrade detection against real auctions in the browser.
+ * The API uses `prismarine-nbt` server-side; this exists so the Tracked scan
+ * page can detect upgrades on live listings without a round trip.
  */
 
 export type NbtValue =

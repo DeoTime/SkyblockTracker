@@ -1,10 +1,12 @@
 /**
- * Direct browser → Hypixel calls, used only by the dev Live view.
+ * Direct browser → Hypixel calls, used by the Tracked scan page.
  *
- * Hypixel serves CORS headers, so these work from the page. That does NOT make
- * it the right production architecture: the keyed calls below expose the key to
- * the client, and every call burns the same 120/min budget as every other tab
- * sharing that key. Production routes all of this through the backend.
+ * Hypixel serves CORS headers, so these work from the page. Everything left
+ * here is KEYLESS — the one keyed call, testApiKey, exists purely to check a
+ * key before handing it to the server, which is where keys now live.
+ *
+ * The API has a cached server-side sweep at /api/sweep that does the same job
+ * as sweepAuctions without making each visitor pull ~50MB. Prefer it.
  */
 
 const BASE = 'https://api.hypixel.net/v2';
@@ -112,25 +114,6 @@ export async function testApiKey(key: string): Promise<{ playerCount: number }> 
   return { playerCount: data.playerCount };
 }
 
-/** Requires a key. All auctions created by one player. */
-export function getPlayerAuctions(playerUuid: string, key: string) {
-  return call<{
-    success: boolean;
-    auctions: {
-      uuid: string;
-      item_name: string;
-      tier: string;
-      starting_bid: number;
-      highest_bid_amount: number;
-      bin: boolean;
-      start: number;
-      end: number;
-      claimed: boolean;
-      item_bytes: string;
-    }[];
-  }>(`/skyblock/auction?player=${encodeURIComponent(playerUuid)}`, key);
-}
-
 /** Mojang username → UUID. Separate service, no Hypixel key involved. */
 export async function resolveUuid(username: string): Promise<{ id: string; name: string }> {
   const res = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(username)}`);
@@ -214,38 +197,3 @@ export async function sweepAuctions(
   return { sellerHits, nameHits, scanned, totalPages };
 }
 
-/** Derived bazaar-flip view: instant-buy vs instant-sell spread per product. */
-export interface BazaarSpread {
-  productId: string;
-  buyPrice: number;
-  sellPrice: number;
-  spread: number;
-  spreadPct: number;
-  weekVolume: number;
-  /**
-   * spread × weekly volume — a theoretical ceiling on what the product could
-   * yield in a week if you captured every unit traded. Nobody captures all of
-   * it, but unlike spreadPct it does not explode on cheap items, so it is the
-   * saner default ranking.
-   */
-  weeklyPotential: number;
-}
-
-export function computeSpreads(data: BazaarResponse): BazaarSpread[] {
-  return Object.values(data.products)
-    .map((p) => {
-      const q = p.quick_status;
-      const spread = q.buyPrice - q.sellPrice;
-      const weekVolume = Math.min(q.buyMovingWeek, q.sellMovingWeek);
-      return {
-        productId: p.product_id,
-        buyPrice: q.buyPrice,
-        sellPrice: q.sellPrice,
-        spread,
-        spreadPct: q.sellPrice > 0 ? (spread / q.sellPrice) * 100 : 0,
-        weekVolume,
-        weeklyPotential: spread * weekVolume,
-      };
-    })
-    .filter((s) => s.sellPrice > 0 && s.spread > 0);
-}

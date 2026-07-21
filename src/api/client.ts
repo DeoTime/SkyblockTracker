@@ -61,30 +61,3 @@ export function fetchItemHistory(itemId: string, username?: string): Promise<Ite
 }
 
 export const usingMocks = USE_MOCKS;
-
-export interface LiveAuction {
-  uuid: string;
-  item_name: string;
-  starting_bid: number;
-  highest_bid_amount: number;
-  bin: boolean;
-  end: number;
-}
-
-/**
- * A player's in-flight auctions, fetched by the server with its stored key.
- *
- * No mock branch: there is nothing to fake here, and this is the one call that
- * proves the installed key works end to end. It fails loudly when no key is
- * installed, which is the useful behaviour for a diagnostic panel.
- */
-export async function fetchPlayerAuctions(
-  username: string,
-): Promise<{ player: { uuid: string; username: string }; auctions: LiveAuction[] }> {
-  const res = await fetch(`${BASE}/players/${encodeURIComponent(username)}/auctions`, {
-    headers: { Accept: 'application/json' },
-  });
-  const body = await res.json().catch(() => ({}) as { error?: string });
-  if (!res.ok) throw new ApiError((body as { error?: string }).error ?? res.statusText, res.status);
-  return body as { player: { uuid: string; username: string }; auctions: LiveAuction[] };
-}
