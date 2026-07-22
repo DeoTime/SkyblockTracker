@@ -143,6 +143,21 @@ h2 {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
 }
 
+/* Main content + a fixed-ish sidebar. The whole dashboard lives in the left
+   column; only the Outstanding box sits in the right. align-items:start keeps
+   the sidebar pinned to the top instead of stretching to the tall left column;
+   it collapses to a single column on narrow screens. */
+.grid-main-aside {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .grid-main-aside {
+    grid-template-columns: 1fr;
+  }
+}
+
 .stack {
   display: flex;
   flex-direction: column;
