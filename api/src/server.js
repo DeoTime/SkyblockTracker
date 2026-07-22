@@ -10,8 +10,6 @@ import {
   writeEnabled,
   looksLikeKey,
   verifyKey,
-  secretMatches,
-  newToken,
 } from './settings.js';
 
 /**
@@ -205,12 +203,16 @@ function alerts() {
   return alertStmts;
 }
 
-/** The mod presents `Authorization: Bearer <token>`; compare in constant time. */
-function streamAuthOk(req) {
-  const stored = settings.streamToken();
-  if (!stored) return false;
+/**
+ * The mod presents `Authorization: Bearer <token>`. Resolve it to the identity
+ * it was issued to (username/uuid) via the token registry, or null if the token
+ * is missing, unknown, or revoked. The registry hashes on lookup, so the raw
+ * token is never compared or stored in plaintext.
+ */
+function streamIdentity(req) {
   const m = /^Bearer\s+(.+)$/i.exec(req.headers['authorization'] ?? '');
-  return m ? secretMatches(m[1].trim(), stored) : false;
+  if (!m) return null;
+  return settings.matchStreamToken(m[1].trim());
 }
 
 /** DB row -> the JSON the mod/webhook consume. Mirrors ingest toPayload(). */
@@ -232,18 +234,42 @@ function alertPayload(r) {
 }
 
 /**
- * Install (regenerate) the stream bearer token. Gated by ADMIN_PASSWORD, the
- * same gate as the Hypixel key. The token is returned ONCE here — paste it into
- * the mod; afterwards only a masked form is ever shown.
+ * Issue or revoke a stream bearer token. Gated by ADMIN_PASSWORD, the same gate
+ * as the Hypixel key.
+ *
+ *   { password, username }        -> mint a token for that player; returned ONCE
+ *   { password, revoke: <sel> }   -> revoke by username or masked handle
+ *
+ * The username is a LABEL for the person the token was handed to — it lets each
+ * token be revoked on its own — not a verified assertion of who is connecting.
+ * The uuid, resolved best-effort, is stored for future player-scoped filtering.
  */
 async function issueStreamToken(req) {
   if (!writeEnabled()) throw new HttpError(503, 'Token issuance is disabled: the server has no ADMIN_PASSWORD set.');
   const body = await readJsonBody(req);
   if (!passwordOk(body.password)) throw new HttpError(401, 'Wrong password.');
 
-  const token = newToken();
-  settings.setStreamToken(token);
-  return { ...settings.streamTokenStatus(), token };
+  if (body.revoke != null && body.revoke !== '') {
+    const selector = String(body.revoke).trim();
+    const n = settings.revokeStreamToken(selector);
+    if (!n) throw new HttpError(404, `No active token matched "${selector}".`);
+    return { revoked: n, ...settings.streamTokenStatus() };
+  }
+
+  const username = typeof body.username === 'string' ? body.username.trim() : '';
+  if (!username) {
+    throw new HttpError(400, 'A username is required so the token can be labelled and revoked individually.');
+  }
+
+  let uuid = null;
+  try {
+    uuid = (await resolvePlayer(username))?.uuid ?? null;
+  } catch {
+    /* Mojang unreachable — the token is still valid, just without a bound uuid */
+  }
+
+  const token = settings.issueStreamToken({ username, uuid });
+  return { token, username, uuid, ...settings.streamTokenStatus() };
 }
 
 /**
@@ -453,17 +479,18 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/alerts/token') {
       if (req.method === 'POST') return send(200, await issueStreamToken(req));
-      // Status only — the token itself is shown once, at issue time.
+      // Status only — a masked listing of who holds a token; the tokens
+      // themselves are shown once, at issue time.
       return send(200, { ...settings.streamTokenStatus(), writable: writeEnabled() });
     }
 
     if (p === '/alerts/stream') {
-      if (!streamAuthOk(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
+      if (!streamIdentity(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
       return startStream(req, res); // holds the socket open; no send()
     }
 
     if (p === '/alerts') {
-      if (!streamAuthOk(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
+      if (!streamIdentity(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
       const rows = alerts()?.recent.all(limit) ?? [];
       return send(200, { alerts: rows.map(alertPayload) });
