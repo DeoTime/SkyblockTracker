@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fetchDashboard } from '../api/client';
 import type { RangeKey } from '../api/types';
 import { useAsync } from '../lib/useAsync';
-import { coins, exactCoins, pct, signedCoins } from '../lib/format';
+import { coins, exactCoins, pct, signedCoins, signedPct } from '../lib/format';
 import { ErrorState, Loading } from '../components/Layout';
 import { HeroFigure, StatTile } from '../components/Stat';
 import { Sparkline } from '../components/Sparkline';
@@ -99,33 +99,42 @@ export function Dashboard() {
               <div className="card">
                 <div className="card-head">
                   <div>
-                    <h2>Best single flip</h2>
+                    <h2>Top items by margin</h2>
                   </div>
+                  <span className="card-note">Average margin per item</span>
                 </div>
-                {data.stats.bestFlip ? (
-                  <div className="stack" style={{ gap: 12 }}>
-                    <HeroFigure
-                      label={data.stats.bestFlip.itemName}
-                      value={signedCoins(data.stats.bestFlip.netProfit)}
-                      note={`${pct(data.stats.bestFlip.profitPct)} margin`}
-                    />
-                    <div>
-                      <div className="breakdown-row">
-                        <span className="breakdown-name">Cost basis</span>
-                        <span className="breakdown-val">{exactCoins(data.stats.bestFlip.costBasis)}</span>
-                      </div>
-                      <div className="breakdown-row">
-                        <span className="breakdown-name">Sale price</span>
-                        <span className="breakdown-val">{exactCoins(data.stats.bestFlip.salePrice)}</span>
-                      </div>
-                      <div className="breakdown-row">
-                        <span className="breakdown-name">AH fees</span>
-                        <span className="breakdown-val">−{exactCoins(data.stats.bestFlip.ahFees)}</span>
-                      </div>
-                    </div>
-                    <Link className="link" to={`/flip/${data.stats.bestFlip.auctionUuid}`}>
-                      See the full breakdown →
-                    </Link>
+                {data.byItem.length ? (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Item</th>
+                          <th className="num">Flips</th>
+                          <th className="num">Avg margin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...data.byItem]
+                          .sort((a, b) => b.avgMarginPct - a.avgMarginPct)
+                          .slice(0, 8)
+                          .map((it) => (
+                            <tr key={it.itemId}>
+                              <td>
+                                <Link to={`/item/${it.itemId}`} className="link">
+                                  {it.itemName}
+                                </Link>
+                              </td>
+                              <td className="num muted">{it.flips}</td>
+                              <td
+                                className="num"
+                                style={{ fontWeight: 600, color: it.avgMarginPct >= 0 ? 'var(--good-text)' : 'var(--critical)' }}
+                              >
+                                {signedPct(it.avgMarginPct)}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
                   </div>
                 ) : (
                   <div className="state">Nothing sold in this range.</div>
