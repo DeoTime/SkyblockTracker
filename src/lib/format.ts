@@ -53,6 +53,15 @@ export function shortDate(iso: string): string {
   });
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Compact stamp in local time: "Jul 21 14:30:52" (MMM DD HH:MM:SS). */
+export function stampCompact(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getMonth()]} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 export function fullDate(iso: string): string {
   return new Date(iso).toLocaleString('en-US', {
     month: 'short',

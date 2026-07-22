@@ -5,9 +5,9 @@ import {
   coins,
   exactCoins,
   priceSourceLabel,
-  shortDate,
   signedCoins,
   signedPct,
+  stampCompact,
   titleCase,
 } from '../lib/format';
 
@@ -103,7 +103,9 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
                   )}
                 </div>
               </td>
-              <td className="num muted">{shortDate(f.soldAt)}</td>
+              <td className="num muted" style={{ whiteSpace: 'nowrap' }}>
+                {stampCompact(f.soldAt)}
+              </td>
               <td
                 className="num"
                 title={`${exactCoins(f.baseItemCost)} base item (${f.acquisition}) + ${exactCoins(f.upgradeCost)} upgrades`}
