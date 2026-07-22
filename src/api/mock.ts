@@ -13,6 +13,9 @@ import type {
   ItemAggregate,
   FlipsPage,
   ItemHistoryResponse,
+  ListingStatus,
+  PendingListing,
+  PendingResponse,
   PriceSource,
   ProfitPoint,
   Rarity,
@@ -138,16 +141,24 @@ const RECIPES: RecipeDef[] = [
 
 /* ---------- AH fee model (mirrors the backend's versioned fee table) ---------- */
 
+/**
+ * Claim tax is a flat 1%; it is the LISTING fee that is tiered — 1% under 10M,
+ * 2% to 100M, 2.5% above. Keep in step with computeFees in api/src/flips.js.
+ */
 export function ahFees(salePrice: number, bin: boolean): { fees: { label: string; amount: number }[]; total: number } {
-  let rate = 0.01;
-  if (salePrice >= 100_000_000) rate = 0.025;
-  else if (salePrice >= 1_000_000) rate = 0.02;
+  let listingRate = 0.01;
+  if (salePrice >= 100_000_000) listingRate = 0.025;
+  else if (salePrice >= 10_000_000) listingRate = 0.02;
 
-  const claiming = Math.round(salePrice * rate);
-  const listing = bin ? Math.round(salePrice * 0.001) : 0;
+  const claiming = Math.round(salePrice * 0.01);
+  const listing = Math.round(salePrice * listingRate);
   const fees = [
-    { label: `Claiming tax (${(rate * 100).toFixed(1)}%)`, amount: claiming },
-    ...(listing > 0 ? [{ label: 'BIN listing fee (0.1%)', amount: listing }] : []),
+    { label: 'Claiming tax (1.0%)', amount: claiming },
+    {
+      // Charged on the listed price; for non-BIN we only know the hammer price.
+      label: `Listing fee (${(listingRate * 100).toFixed(1)}%)${bin ? '' : ', estimated on sale price'}`,
+      amount: listing,
+    },
   ];
   return { fees, total: claiming + listing };
 }
@@ -316,7 +327,7 @@ export function mockDashboard(username: string, range: RangeKey): DashboardRespo
     stats,
     profitSeries: buildSeries(flips, cutoff),
     byItem: buildByItem(flips),
-    recentFlips: flips.slice(0, 12).map(strip),
+    recentFlips: flips.slice(0, 500).map(strip),
   };
 }
 
@@ -374,6 +385,42 @@ export function mockItemHistory(itemId: string): ItemHistoryResponse {
     // Every flip of this item, not a truncated sample — the page claims to show
     // "your flips of this item" and must not quietly drop some.
     flips: POOL.filter((f) => f.itemId === itemId).map(strip),
+  };
+}
+
+export function mockPending(username: string): PendingResponse {
+  // A few of the newest flips, re-cast as still-in-flight listings: most active
+  // and ending soon, one already sold and waiting to be claimed, one expired.
+  const sample = POOL.slice(0, 5);
+  const states: ListingStatus[] = ['active', 'active', 'active', 'sold', 'expired'];
+
+  const listings: PendingListing[] = sample.map((f, i) => {
+    const status = states[i] ?? 'active';
+    const endsAt =
+      status === 'active'
+        ? new Date(NOW + (i + 1) * 6 * 3_600_000).toISOString() // ends in the next hours
+        : new Date(NOW - (i + 1) * 3_600_000).toISOString(); // ended recently
+    return { ...strip(f), status, endsAt, listPrice: f.salePrice, expectedSale: f.salePrice };
+  });
+
+  const willSell = listings.filter((l) => l.status !== 'expired');
+  const total = (sel: (l: PendingListing) => number) => sum(willSell, sel);
+
+  return {
+    player: { uuid: '0d9b3f2c-5a4e-4d1b-9a7c-2e8f6b1d4c3a', username },
+    generatedAt: new Date(NOW).toISOString(),
+    listings,
+    totals: {
+      counts: {
+        active: listings.filter((l) => l.status === 'active').length,
+        sold: listings.filter((l) => l.status === 'sold').length,
+        expired: listings.filter((l) => l.status === 'expired').length,
+      },
+      expectedNet: total((l) => l.netProfit),
+      expectedSaleValue: total((l) => l.expectedSale),
+      expectedFees: total((l) => l.ahFees),
+      expectedCost: total((l) => l.costBasis),
+    },
   };
 }
 

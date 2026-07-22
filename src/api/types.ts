@@ -191,6 +191,39 @@ export interface FlipsPage {
   totalPages: number;
 }
 
+/**
+ * A player's currently-unclaimed auctions, priced for expected profit. The
+ * status splits the three things "unclaimed" can mean:
+ *   active   still listed, no buyer yet — will sell if a buyer comes
+ *   sold     ended with a buyer, coins waiting to be claimed
+ *   expired  ended with no buyer — the item returns, no sale happens
+ */
+export type ListingStatus = 'active' | 'sold' | 'expired';
+
+export interface PendingListing extends FlipSummary {
+  status: ListingStatus;
+  /** When the auction ends (active) or ended (sold/expired). ISO. */
+  endsAt: string;
+  /** Starting bid / BIN price the item was listed at. */
+  listPrice: number;
+  /** Projected sale price the profit estimate is built on. */
+  expectedSale: number;
+}
+
+export interface PendingResponse {
+  player: Player;
+  generatedAt: string;
+  listings: PendingListing[];
+  totals: {
+    counts: { active: number; sold: number; expired: number };
+    /** Net profit if every active + sold listing settles — the headline. */
+    expectedNet: number;
+    expectedSaleValue: number;
+    expectedFees: number;
+    expectedCost: number;
+  };
+}
+
 export interface ItemHistoryPoint {
   date: string;
   craftCost: number;

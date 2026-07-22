@@ -1,0 +1,6 @@
+# Authored on Windows, executed on Linux. A CRLF shebang line makes the kernel
+# look for an interpreter named "bash\r", which fails with a confusing
+# "no such file or directory" naming a file that plainly exists.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.json text eol=lf

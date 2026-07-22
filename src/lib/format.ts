@@ -39,6 +39,19 @@ export function signedPct(n: number, digits = 1): string {
   return (n > 0 ? '+' : '') + pct(n, digits);
 }
 
+/**
+ * A few SkyBlock item names are long enough to wrap or clip inside tight table
+ * cells and chart labels. Map those to the community acronym; call sites keep
+ * the full name in a title attribute so nothing is lost. Extend as needed.
+ */
+const ITEM_ABBREV: Record<string, string> = {
+  'Aspect of the Void': 'AOTV',
+};
+
+export function abbrevItem(name: string): string {
+  return ITEM_ABBREV[name] ?? name;
+}
+
 function trim(v: number, digits: number): string {
   return v
     .toFixed(digits)
@@ -51,6 +64,15 @@ export function shortDate(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Compact stamp in local time: "Jul 21 14:30:52" (MMM DD HH:MM:SS). */
+export function stampCompact(iso: string): string {
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${MONTHS[d.getMonth()]} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 export function fullDate(iso: string): string {
