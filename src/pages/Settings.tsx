@@ -56,10 +56,6 @@ export function Settings() {
           <div className="card-head">
             <div>
               <h2>{installed?.configured ? 'Replace key' : 'Install key'}</h2>
-              <p className="sub">
-                The key is stored on the server and used for its own Hypixel calls. It is never sent
-                back to this page.
-              </p>
             </div>
           </div>
 
@@ -77,12 +73,7 @@ export function Settings() {
             </div>
           )}
 
-          {installed && !installed.writable && (
-            <p className="sub" style={{ color: 'var(--critical)', marginTop: 12 }}>
-              The server has no admin password configured, so keys cannot be installed from here.
-              Redeploy the API with <code>ADMIN_PASSWORD</code> set.
-            </p>
-          )}
+
 
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             <input
