@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { fetchDashboard } from '../api/client';
 import type { RangeKey } from '../api/types';
 import { useAsync } from '../lib/useAsync';
-import { coins, exactCoins, pct, signedCoins, signedPct } from '../lib/format';
+import { abbrevItem, coins, exactCoins, pct, signedCoins, signedPct } from '../lib/format';
 import { ErrorState, Loading } from '../components/Layout';
 import { HeroFigure, StatTile } from '../components/Stat';
 import { Sparkline } from '../components/Sparkline';
@@ -120,8 +120,8 @@ export function Dashboard() {
                           .map((it) => (
                             <tr key={it.itemId}>
                               <td>
-                                <Link to={`/item/${it.itemId}`} className="link">
-                                  {it.itemName}
+                                <Link to={`/item/${it.itemId}`} className="link" title={it.itemName}>
+                                  {abbrevItem(it.itemName)}
                                 </Link>
                               </td>
                               <td className="num muted">{it.flips}</td>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ItemAggregate } from '../../api/types';
-import { exactCoins, pct, signedCoins } from '../../lib/format';
+import { abbrevItem, exactCoins, pct, signedCoins } from '../../lib/format';
 import { useMeasure } from '../../lib/useMeasure';
 
 const ROW = 30;
@@ -83,7 +83,8 @@ export function ItemProfitBars({ items, onSelect }: Props) {
                   fontSize={12.5}
                   fill="var(--text-primary)"
                 >
-                  {truncate(item.itemName, 22)}
+                  {truncate(abbrevItem(item.itemName), 22)}
+                  <title>{item.itemName}</title>
                 </text>
 
                 <path d={barPath(zeroX, end, y + 5, ROW - 10, 4)} fill={color} />

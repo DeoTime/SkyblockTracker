@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { FlipSummary } from '../api/types';
 import {
+  abbrevItem,
   coins,
   exactCoins,
   priceSourceLabel,
@@ -88,8 +89,8 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
             <tr key={f.auctionUuid}>
               <td>
                 <div className="item-cell">
-                  <Link to={`/flip/${f.auctionUuid}`} className="link">
-                    {f.itemName}
+                  <Link to={`/flip/${f.auctionUuid}`} className="link" title={f.itemName}>
+                    {abbrevItem(f.itemName)}
                   </Link>
                   {showItemLink && (
                     <Link to={`/item/${f.itemId}`} className="pill" title="Price history for this item">

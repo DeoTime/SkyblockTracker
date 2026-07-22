@@ -39,6 +39,19 @@ export function signedPct(n: number, digits = 1): string {
   return (n > 0 ? '+' : '') + pct(n, digits);
 }
 
+/**
+ * A few SkyBlock item names are long enough to wrap or clip inside tight table
+ * cells and chart labels. Map those to the community acronym; call sites keep
+ * the full name in a title attribute so nothing is lost. Extend as needed.
+ */
+const ITEM_ABBREV: Record<string, string> = {
+  'Aspect of the Void': 'AOTV',
+};
+
+export function abbrevItem(name: string): string {
+  return ITEM_ABBREV[name] ?? name;
+}
+
 function trim(v: number, digits: number): string {
   return v
     .toFixed(digits)

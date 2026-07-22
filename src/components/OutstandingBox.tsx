@@ -3,7 +3,7 @@ import { fetchPending } from '../api/client';
 import { ApiError } from '../api/types';
 import type { PendingListing } from '../api/types';
 import { useAsync } from '../lib/useAsync';
-import { coins, duration, exactCoins, signedCoins, signedPct } from '../lib/format';
+import { abbrevItem, coins, duration, exactCoins, signedCoins, signedPct } from '../lib/format';
 import { HeroFigure } from './Stat';
 
 const STATUS: Record<PendingListing['status'], { label: string; cls: string }> = {
@@ -83,8 +83,8 @@ export function OutstandingBox({ username }: { username: string }) {
                       <tr key={l.auctionUuid}>
                         <td>
                           <div className="item-cell">
-                            <Link to={`/item/${l.itemId}`} className="link">
-                              {l.itemName}
+                            <Link to={`/item/${l.itemId}`} className="link" title={l.itemName}>
+                              {abbrevItem(l.itemName)}
                             </Link>
                             {l.unpricedUpgrades > 0 && (
                               <span className="pill" title={`${l.unpricedUpgrades} upgrade(s) could not be priced`}>
