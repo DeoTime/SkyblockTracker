@@ -32,10 +32,14 @@ BIND="${BIND:-127.0.0.1}"
 PORT="${PORT:-4000}"
 
 echo "==> packaging (excluding node_modules — host is aarch64, native module)"
-tar czf /tmp/skyblock-api.tar.gz --exclude=node_modules -C "$(dirname "$0")/.." api
-scp -q /tmp/skyblock-api.tar.gz "$HOST:/tmp/skyblock-api.tar.gz"
-ssh "$HOST" "mkdir -p $REMOTE_DIR && tar xzf /tmp/skyblock-api.tar.gz -C $REMOTE_DIR --strip-components=1 && rm /tmp/skyblock-api.tar.gz"
-rm -f /tmp/skyblock-api.tar.gz
+# Stream the tarball straight over ssh instead of writing a local temp file and
+# scp-ing it. On Windows Git Bash, tar is MSYS but scp is Win32 OpenSSH, and the
+# two disagree about what "/tmp" means — MSYS writes it under the Git install,
+# Win32 scp reads it as C:\tmp — so the scp could not find the file tar wrote.
+# A pipe has no local path for them to disagree on, and behaves the same on Linux.
+ssh "$HOST" "mkdir -p $REMOTE_DIR"
+tar czf - --exclude=node_modules -C "$(dirname "$0")/.." api \
+  | ssh "$HOST" "tar xzf - -C $REMOTE_DIR --strip-components=1"
 
 echo "==> building image (better-sqlite3 compiles from source on ARM; ~3 min)"
 ssh "$HOST" "cd $REMOTE_DIR && docker build -t ${NAME}:latest ."
@@ -57,7 +61,7 @@ ssh "$HOST" "docker run -d \
   -e CORS_ORIGIN='${CORS_ORIGIN:-*}' \
   -e ADMIN_PASSWORD='${ADMIN_PASSWORD:-}' \
   -e TZ=UTC \
-  --memory 512m \
+  --memory 1g \
   --cpus 0.5 \
   --pids-limit 128 \
   --security-opt no-new-privileges:true \

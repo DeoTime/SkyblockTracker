@@ -91,7 +91,34 @@ async function flipOf(row, detail = false) {
   return value;
 }
 
-const flipsFor = (uuid, from) => Promise.all(qSales.all(uuid, from).map((r) => flipOf(r)));
+/**
+ * Rebuild a batch of flips with BOUNDED concurrency.
+ *
+ * A cold process has an empty NEU recipe cache, so every flip fans out into a
+ * recursive tree of fetches to the NEU repo. Mapping a player's whole sale
+ * history through Promise.all fired hundreds of those at once and kept every
+ * intermediate alive, which pushed the 512MB container past its cgroup limit —
+ * the kernel OOM-killed it mid-request (empty reply -> 502), and because it
+ * died before finishing it never warmed the cache, so the next request did the
+ * same thing. A small window keeps peak memory and fetch fan-out flat while
+ * still warming fetchNeuItem/flipCache so every later request is a cache hit.
+ */
+const FLIP_CONCURRENCY = 6;
+
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
+
+const flipsFor = (uuid, from) => mapLimit(qSales.all(uuid, from), FLIP_CONCURRENCY, (r) => flipOf(r));
 
 /* ---- handlers ------------------------------------------------------- */
 
@@ -143,7 +170,7 @@ async function pending(username) {
   if (!player) throw new HttpError(404, `No Minecraft account named "${username}".`);
 
   const raw = await playerAuctions(player.uuid, key);
-  const listings = await Promise.all(raw.map((a) => buildPending(a, db)));
+  const listings = await mapLimit(raw, FLIP_CONCURRENCY, (a) => buildPending(a, db));
 
   // Active first (ending soonest), then sold-pending-claim, then expired.
   const rank = { active: 0, sold: 1, expired: 2 };
@@ -173,7 +200,7 @@ async function itemHistory(itemId, username) {
   }
 
   const uuid = player?.uuid ?? null;
-  const flips = await Promise.all(qItemSales.all(itemId, uuid, uuid).map((r) => flipOf(r)));
+  const flips = await mapLimit(qItemSales.all(itemId, uuid, uuid), FLIP_CONCURRENCY, (r) => flipOf(r));
 
   return {
     itemId,

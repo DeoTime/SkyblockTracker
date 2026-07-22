@@ -231,11 +231,22 @@ export async function buildPending(auction, db) {
   // there is until the hammer falls.
   const expectedSale = bin ? listPrice : Math.max(topBid, listPrice);
 
+  // The player-auctions endpoint gives item_bytes as an OBJECT — {type, data}
+  // with the gzipped-NBT base64 under .data — whereas the ingest stores (and
+  // readExtraAttributes/buildFlip expect) the base64 string on its own. Feeding
+  // the object to Buffer.from(...,'base64') decodes to garbage, the NBT parse
+  // throws, and the item is left UNKNOWN with a zero cost basis — which is what
+  // was inflating "expected net profit". Normalise to the bare string first.
+  const itemBytes =
+    typeof auction.item_bytes === 'string'
+      ? auction.item_bytes
+      : auction.item_bytes?.data ?? null;
+
   // The SkyBlock item id lives in the NBT, not on the auction envelope.
   let itemId = null;
-  if (auction.item_bytes) {
+  if (itemBytes) {
     try {
-      itemId = (await readExtraAttributes(auction.item_bytes))?.id ?? null;
+      itemId = (await readExtraAttributes(itemBytes))?.id ?? null;
     } catch {
       /* corrupt NBT — fall through unidentified */
     }
@@ -245,7 +256,7 @@ export async function buildPending(auction, db) {
     auction_id: auction.uuid,
     item_id: itemId ?? 'UNKNOWN',
     // Without an id there is no recipe to cost against, so skip the NBT work too.
-    item_bytes: itemId ? auction.item_bytes : null,
+    item_bytes: itemId ? itemBytes : null,
     crafted_at: null,
     sold_at: end, // projected sale time (or the actual one, for a sold listing)
     price: expectedSale,
