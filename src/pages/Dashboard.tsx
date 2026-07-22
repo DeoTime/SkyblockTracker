@@ -79,12 +79,7 @@ export function Dashboard() {
           </div>
 
           <div className="card">
-            <div className="card-head">
-              <div>
-                <h2>Cumulative net profit</h2>
-              </div>
-            </div>
-            <ProfitAreaChart points={data.profitSeries} />
+            <ProfitAreaChart flips={data.recentFlips} />
           </div>
 
           <div className="grid grid-2">

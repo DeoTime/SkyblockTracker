@@ -235,6 +235,12 @@ h2 {
   font-weight: 600;
 }
 
+/* Compact variant for in-card toggles, where space is tight. */
+.seg-sm button {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
 /* ---------- charts ---------- */
 
 .chart-wrap {
