@@ -211,7 +211,9 @@ if (snipeCfg) {
   loops.push(loop('snipe', pollSnipe, snipeCfg.intervalMs));
   log(
     `snipe: watching ${snipeCfg.watch.map((w) => w.id).join(', ')} — ` +
-      `drop>=${Math.round(snipeCfg.dropThreshold * 100)}%, minProfit ${snipeCfg.minProfit.toLocaleString('en-US')}` +
+      (snipeCfg.emitAll
+        ? 'firehose (emit ALL BIN listings; client filters)'
+        : `drop>=${Math.round(snipeCfg.dropThreshold * 100)}%, minProfit ${snipeCfg.minProfit.toLocaleString('en-US')}`) +
       (snipeCfg.dryRun ? ' [DRY RUN]' : '') +
       (snipeCfg.webhookUrl ? ' + webhook' : ''),
   );

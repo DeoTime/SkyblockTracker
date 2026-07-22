@@ -50,6 +50,10 @@ export function loadSnipeConfig(env = process.env) {
   return {
     watch,
     intervalMs: num(env.SNIPE_INTERVAL_MS, 15_000),
+    // Firehose: emit EVERY new BIN listing for a watched item (still id-confirmed
+    // + deduped), leaving all the "is it worth it" thresholding to the client mod.
+    // Off -> the server-side drop/profit/margin gates below apply.
+    emitAll: env.SNIPE_EMIT_ALL === '1' || (env.SNIPE_EMIT_ALL ?? '').toLowerCase() === 'true',
     dropThreshold: num(env.SNIPE_DROP_THRESHOLD, 0.35), // list price <= baseline*(1-this)
     minProfit: num(env.SNIPE_MIN_PROFIT, 2_000_000),
     minMarginPct: num(env.SNIPE_MIN_MARGIN_PCT, 25),
@@ -147,12 +151,13 @@ export function makeSnipe(db, log, cfg) {
 
   async function evaluateItem(id, listings, now) {
     // The item id lives in the NBT, not the envelope — confirm it (name match can
-    // catch a look-alike) and keep only clean base copies.
+    // catch a look-alike). In firehose mode we keep every confirmed copy; in
+    // filtered mode we also require a clean base copy.
     const confirmed = [];
     for (const l of listings) {
       try {
         const d = await decodeItem(l.item_bytes);
-        if (d && d.itemId === id && d.isClean) confirmed.push(l);
+        if (d && d.itemId === id && (cfg.emitAll || d.isClean)) confirmed.push(l);
       } catch {
         /* undecodable blob — skip */
       }
@@ -161,27 +166,30 @@ export function makeSnipe(db, log, cfg) {
 
     confirmed.sort((a, b) => a.price - b.price);
     const baseline = medianBaseline(id, now);
-    if (baseline === null) return 0;
+    // Filtered mode needs a baseline to judge "much lower than usual"; the
+    // firehose emits regardless (profit fields are still computed best-effort).
+    if (baseline === null && !cfg.emitAll) return 0;
+    const base = baseline ?? 0;
 
     let fired = 0;
     for (const l of confirmed) {
-      if (l.price > baseline * (1 - cfg.dropThreshold)) continue; // not "much lower than usual"
+      if (!cfg.emitAll && l.price > baseline * (1 - cfg.dropThreshold)) continue; // not "much lower than usual"
 
       // Resale = the cheapest OTHER live listing (what you'd relist just under);
       // if this is the only one, fall back to the historical baseline.
       const other = confirmed.find((x) => x.uuid !== l.uuid);
-      const resale = other ? other.price : baseline;
+      const resale = other ? other.price : base;
 
       const estProfit = Math.round(resale * (1 - feeRateFor(resale)) - l.price);
       const marginPct = l.price > 0 ? +((estProfit / l.price) * 100).toFixed(1) : 0;
-      if (estProfit < cfg.minProfit || marginPct < cfg.minMarginPct) continue;
+      if (!cfg.emitAll && (estProfit < cfg.minProfit || marginPct < cfg.minMarginPct)) continue;
 
       const row = {
         auction_id: l.uuid,
         item_id: id,
         item_name: l.itemName ?? watchById.get(id)?.name ?? displayName(id),
         price: l.price,
-        baseline,
+        baseline: base,
         est_resale: resale,
         est_profit: estProfit,
         margin_pct: marginPct,
