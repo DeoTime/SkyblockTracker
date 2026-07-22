@@ -50,36 +50,42 @@ export function Dashboard() {
 
       {data && !loading && (
         <div className="stack">
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap' }}>
-              <HeroFigure
-                label={`Net profit · last ${range === 'all' ? 'all time' : range}`}
-                value={signedCoins(data.stats.netProfit)}
-                note={
-                  <>
-                    {exactCoins(data.stats.grossRevenue)} revenue −{' '}
-                    {exactCoins(data.stats.totalBaseItemCost)} base items −{' '}
-                    {exactCoins(data.stats.totalUpgradeCost)} upgrades −{' '}
-                    {exactCoins(data.stats.totalFees)} fees
-                  </>
-                }
-              />
-              <Sparkline
-                values={data.profitSeries.map((p) => p.cumulative)}
-                width={150}
-                height={40}
-                color={data.stats.netProfit >= 0 ? 'var(--pos)' : 'var(--neg)'}
-              />
+          {/* Split: realised performance to date on the left, expected
+              performance from still-live listings on the right. */}
+          <div className="grid grid-2">
+            <div className="stack">
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap' }}>
+                  <HeroFigure
+                    label={`Net profit · last ${range === 'all' ? 'all time' : range}`}
+                    value={signedCoins(data.stats.netProfit)}
+                    note={
+                      <>
+                        {exactCoins(data.stats.grossRevenue)} revenue −{' '}
+                        {exactCoins(data.stats.totalBaseItemCost)} base items −{' '}
+                        {exactCoins(data.stats.totalUpgradeCost)} upgrades −{' '}
+                        {exactCoins(data.stats.totalFees)} fees
+                      </>
+                    }
+                  />
+                  <Sparkline
+                    values={data.profitSeries.map((p) => p.cumulative)}
+                    width={150}
+                    height={40}
+                    color={data.stats.netProfit >= 0 ? 'var(--pos)' : 'var(--neg)'}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-kpi">
+                <StatTile label="Flips sold" value={String(data.stats.flipCount)} note={`${coins(data.stats.grossRevenue)} gross revenue`} />
+                <StatTile label="Avg margin" value={pct(data.stats.avgMarginPct)} />
+                <StatTile label="Coins / hour" value={coins(data.stats.coinsPerHour)} />
+              </div>
             </div>
-          </div>
 
-          <div className="grid grid-kpi">
-            <StatTile label="Flips sold" value={String(data.stats.flipCount)} note={`${coins(data.stats.grossRevenue)} gross revenue`} />
-            <StatTile label="Avg margin" value={pct(data.stats.avgMarginPct)} />
-            <StatTile label="Coins / hour" value={coins(data.stats.coinsPerHour)} />
+            <OutstandingBox username={username} />
           </div>
-
-          <OutstandingBox username={username} />
 
           <div className="card">
             <ProfitAreaChart flips={data.recentFlips} />
