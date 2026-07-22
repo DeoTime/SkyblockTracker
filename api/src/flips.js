@@ -207,6 +207,81 @@ export async function buildFlip(row, db, { detail = false } = {}) {
   };
 }
 
+/**
+ * Price a still-in-flight auction the same way buildFlip prices a sold one:
+ * projected sale price − fees − craft cost. It reuses buildFlip verbatim by
+ * building a synthetic tracked_sales row, so the number a listing shows here is
+ * the number it will show in the history once it sells.
+ *
+ * playerAuctions returns UNCLAIMED auctions, which is a mix of three states:
+ *   active   end in the future, no buyer yet — will sell if a buyer comes
+ *   sold     ended with a buyer, coins waiting to be claimed — effectively banked
+ *   expired  ended with no buyer — the item returns, no sale happens
+ * Only active + sold are "expected profit"; expired is reported but excluded.
+ */
+export async function buildPending(auction, db) {
+  const bin = !!auction.bin;
+  const end = Number(auction.end ?? Date.now());
+  const topBid = Number(auction.highest_bid_amount ?? 0);
+  const listPrice = Number(auction.starting_bid ?? 0);
+  const status = end > Date.now() ? 'active' : topBid > 0 ? 'sold' : 'expired';
+
+  // BIN sells at its list price; an open auction at the current top bid, or the
+  // opening bid if nobody has bid yet — optimistic, but it is the only number
+  // there is until the hammer falls.
+  const expectedSale = bin ? listPrice : Math.max(topBid, listPrice);
+
+  // The SkyBlock item id lives in the NBT, not on the auction envelope.
+  let itemId = null;
+  if (auction.item_bytes) {
+    try {
+      itemId = (await readExtraAttributes(auction.item_bytes))?.id ?? null;
+    } catch {
+      /* corrupt NBT — fall through unidentified */
+    }
+  }
+
+  const row = {
+    auction_id: auction.uuid,
+    item_id: itemId ?? 'UNKNOWN',
+    // Without an id there is no recipe to cost against, so skip the NBT work too.
+    item_bytes: itemId ? auction.item_bytes : null,
+    crafted_at: null,
+    sold_at: end, // projected sale time (or the actual one, for a sold listing)
+    price: expectedSale,
+    bin: bin ? 1 : 0,
+    seller: auction.auctioneer,
+  };
+
+  const flip = await buildFlip(row, db);
+
+  return {
+    ...flip,
+    itemName: itemId ? flip.itemName : auction.item_name ?? 'Unknown item',
+    status,
+    endsAt: iso(end),
+    listPrice,
+    expectedSale,
+  };
+}
+
+/** Roll a set of priced pending listings into the box's headline totals. */
+export function summarizePending(listings) {
+  const willSell = listings.filter((l) => l.status !== 'expired');
+  const sum = (sel) => willSell.reduce((n, l) => n + sel(l), 0);
+  return {
+    counts: {
+      active: listings.filter((l) => l.status === 'active').length,
+      sold: listings.filter((l) => l.status === 'sold').length,
+      expired: listings.filter((l) => l.status === 'expired').length,
+    },
+    expectedNet: sum((l) => l.netProfit),
+    expectedSaleValue: sum((l) => l.expectedSale),
+    expectedFees: sum((l) => l.ahFees),
+    expectedCost: sum((l) => l.costBasis),
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Aggregation                                                         */
 /* ------------------------------------------------------------------ */

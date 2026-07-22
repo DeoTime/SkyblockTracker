@@ -1,6 +1,13 @@
 import { ApiError } from './types';
-import type { DashboardResponse, FlipDetail, FlipsPage, ItemHistoryResponse, RangeKey } from './types';
-import { mockDashboard, mockFlipDetail, mockFlips, mockItemHistory } from './mock';
+import type {
+  DashboardResponse,
+  FlipDetail,
+  FlipsPage,
+  ItemHistoryResponse,
+  PendingResponse,
+  RangeKey,
+} from './types';
+import { mockDashboard, mockFlipDetail, mockFlips, mockItemHistory, mockPending } from './mock';
 
 const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false';
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -53,6 +60,14 @@ export function fetchFlips(
 
 export function fetchFlip(auctionUuid: string): Promise<FlipDetail> {
   return get(`/flips/${encodeURIComponent(auctionUuid)}`, () => mockFlipDetail(auctionUuid));
+}
+
+/**
+ * A player's outstanding (unclaimed) auctions, priced for expected profit.
+ * Needs the stored Hypixel key server-side; returns 503 until one is installed.
+ */
+export function fetchPending(username: string): Promise<PendingResponse> {
+  return get(`/players/${encodeURIComponent(username)}/pending`, () => mockPending(username));
 }
 
 export function fetchItemHistory(itemId: string, username?: string): Promise<ItemHistoryResponse> {

@@ -13,6 +13,9 @@ import type {
   ItemAggregate,
   FlipsPage,
   ItemHistoryResponse,
+  ListingStatus,
+  PendingListing,
+  PendingResponse,
   PriceSource,
   ProfitPoint,
   Rarity,
@@ -382,6 +385,42 @@ export function mockItemHistory(itemId: string): ItemHistoryResponse {
     // Every flip of this item, not a truncated sample — the page claims to show
     // "your flips of this item" and must not quietly drop some.
     flips: POOL.filter((f) => f.itemId === itemId).map(strip),
+  };
+}
+
+export function mockPending(username: string): PendingResponse {
+  // A few of the newest flips, re-cast as still-in-flight listings: most active
+  // and ending soon, one already sold and waiting to be claimed, one expired.
+  const sample = POOL.slice(0, 5);
+  const states: ListingStatus[] = ['active', 'active', 'active', 'sold', 'expired'];
+
+  const listings: PendingListing[] = sample.map((f, i) => {
+    const status = states[i] ?? 'active';
+    const endsAt =
+      status === 'active'
+        ? new Date(NOW + (i + 1) * 6 * 3_600_000).toISOString() // ends in the next hours
+        : new Date(NOW - (i + 1) * 3_600_000).toISOString(); // ended recently
+    return { ...strip(f), status, endsAt, listPrice: f.salePrice, expectedSale: f.salePrice };
+  });
+
+  const willSell = listings.filter((l) => l.status !== 'expired');
+  const total = (sel: (l: PendingListing) => number) => sum(willSell, sel);
+
+  return {
+    player: { uuid: '0d9b3f2c-5a4e-4d1b-9a7c-2e8f6b1d4c3a', username },
+    generatedAt: new Date(NOW).toISOString(),
+    listings,
+    totals: {
+      counts: {
+        active: listings.filter((l) => l.status === 'active').length,
+        sold: listings.filter((l) => l.status === 'sold').length,
+        expired: listings.filter((l) => l.status === 'expired').length,
+      },
+      expectedNet: total((l) => l.netProfit),
+      expectedSaleValue: total((l) => l.expectedSale),
+      expectedFees: total((l) => l.ahFees),
+      expectedCost: total((l) => l.costBasis),
+    },
   };
 }
 

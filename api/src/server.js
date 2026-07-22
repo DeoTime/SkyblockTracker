@@ -1,6 +1,6 @@
 import http from 'node:http';
 import Database from 'better-sqlite3';
-import { buildFlip, summarize, profitSeries, byItem, rangeStart } from './flips.js';
+import { buildFlip, buildPending, summarizePending, summarize, profitSeries, byItem, rangeStart } from './flips.js';
 import { itemMetadata } from './prices.js';
 import { sweep, playerAuctions } from './sweep.js';
 import {
@@ -128,6 +128,28 @@ async function flipsPage(username, range, page, pageSize) {
     totalFlips: all.length,
     totalPages: Math.max(1, Math.ceil(all.length / pageSize)),
   };
+}
+
+/**
+ * A player's still-in-flight auctions, each priced for expected profit. This is
+ * the one read that needs the stored key — everything else runs off the keyless
+ * public book.
+ */
+async function pending(username) {
+  const key = settings.apiKey();
+  if (!key) throw new HttpError(503, 'No Hypixel key is installed. Add one on the settings page.');
+
+  const player = await resolvePlayer(username);
+  if (!player) throw new HttpError(404, `No Minecraft account named "${username}".`);
+
+  const raw = await playerAuctions(player.uuid, key);
+  const listings = await Promise.all(raw.map((a) => buildPending(a, db)));
+
+  // Active first (ending soonest), then sold-pending-claim, then expired.
+  const rank = { active: 0, sold: 1, expired: 2 };
+  listings.sort((a, b) => rank[a.status] - rank[b.status] || Date.parse(a.endsAt) - Date.parse(b.endsAt));
+
+  return { player, generatedAt: new Date().toISOString(), listings, totals: summarizePending(listings) };
 }
 
 async function flipDetail(auctionUuid) {
@@ -294,6 +316,10 @@ const server = http.createServer(async (req, res) => {
       const player = await resolvePlayer(seg[1]);
       if (!player) throw new HttpError(404, `No Minecraft account named "${seg[1]}".`);
       return send(200, { player, auctions: await playerAuctions(player.uuid, key) });
+    }
+
+    if (seg[0] === 'players' && seg[2] === 'pending') {
+      return send(200, await pending(seg[1]));
     }
 
     if (p === '/health') {

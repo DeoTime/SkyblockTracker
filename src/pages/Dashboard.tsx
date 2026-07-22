@@ -8,6 +8,7 @@ import { ErrorState, Loading } from '../components/Layout';
 import { HeroFigure, StatTile } from '../components/Stat';
 import { Sparkline } from '../components/Sparkline';
 import { FlipsTable } from '../components/FlipsTable';
+import { OutstandingBox } from '../components/OutstandingBox';
 import { ProfitAreaChart } from '../components/charts/ProfitAreaChart';
 import { ItemProfitBars } from '../components/charts/ItemProfitBars';
 
@@ -77,6 +78,8 @@ export function Dashboard() {
             <StatTile label="Avg margin" value={pct(data.stats.avgMarginPct)} />
             <StatTile label="Coins / hour" value={coins(data.stats.coinsPerHour)} />
           </div>
+
+          <OutstandingBox username={username} />
 
           <div className="card">
             <ProfitAreaChart flips={data.recentFlips} />
