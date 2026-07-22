@@ -18,6 +18,14 @@
 # Leaving it unset FAILS CLOSED — /api/key returns 503 and no key can be
 # installed. That is the safe default for a routine redeploy, but it also means
 # a redeploy without it turns key updates off until you pass it again.
+#
+# ENROLL_CODE is the low-privilege invite code the mod's `/snipe login` sends to
+# mint its own stream token. Also read from the environment, never committed:
+#
+#   ADMIN_PASSWORD='…' ENROLL_CODE='…' ./deploy.sh nerfchess
+#
+# Unset -> mod self-enrolment is closed (existing tokens keep working; only new
+# `/snipe login` calls fail). Pass it every deploy you want enrolment open.
 set -euo pipefail
 
 HOST="${1:-nerfchess}"
@@ -60,6 +68,7 @@ ssh "$HOST" "docker run -d \
   -e SETTINGS_PATH=/data/settings.db \
   -e CORS_ORIGIN='${CORS_ORIGIN:-*}' \
   -e ADMIN_PASSWORD='${ADMIN_PASSWORD:-}' \
+  -e ENROLL_CODE='${ENROLL_CODE:-}' \
   -e TZ=UTC \
   --memory 1g \
   --cpus 0.5 \

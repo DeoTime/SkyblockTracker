@@ -12,6 +12,12 @@ import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 
 const WRITE_PASSWORD = process.env.ADMIN_PASSWORD ?? '';
 
+// A low-privilege shared "invite code" whose ONLY power is minting a stream
+// token for the caller. Distinct from ADMIN_PASSWORD (which can also revoke
+// tokens and change the Hypixel key) so it can be handed to friends without
+// giving away the master credential. Unset -> mod enrolment is closed.
+const ENROLL_CODE = process.env.ENROLL_CODE ?? '';
+
 export function openSettings(path) {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
@@ -57,6 +63,22 @@ export function passwordOk(supplied) {
 }
 
 export const writeEnabled = () => WRITE_PASSWORD.length > 0;
+
+/** Whether mod self-enrolment is open (an ENROLL_CODE is configured). */
+export const enrollEnabled = () => ENROLL_CODE.length > 0;
+
+/**
+ * Constant-time check of a supplied enrol code against ENROLL_CODE. Same hashing
+ * dance as passwordOk so timingSafeEqual sees equal-length buffers and the code's
+ * length never leaks.
+ */
+export function enrollOk(supplied) {
+  if (!ENROLL_CODE) return false;
+  if (typeof supplied !== 'string' || supplied.length === 0) return false;
+  const a = createHash('sha256').update(supplied).digest();
+  const b = createHash('sha256').update(ENROLL_CODE).digest();
+  return timingSafeEqual(a, b);
+}
 
 /** A fresh opaque bearer token for the alert stream. */
 export const newToken = () => randomBytes(24).toString('hex');

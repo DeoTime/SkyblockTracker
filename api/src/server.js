@@ -8,6 +8,8 @@ import {
   makeSettingsStore,
   passwordOk,
   writeEnabled,
+  enrollOk,
+  enrollEnabled,
   looksLikeKey,
   verifyKey,
 } from './settings.js';
@@ -234,22 +236,31 @@ function alertPayload(r) {
 }
 
 /**
- * Issue or revoke a stream bearer token. Gated by ADMIN_PASSWORD, the same gate
- * as the Hypixel key.
+ * Issue or revoke a stream bearer token.
  *
  *   { password, username }        -> mint a token for that player; returned ONCE
- *   { password, revoke: <sel> }   -> revoke by username or masked handle
+ *   { code, username }            -> same, but authorised by the shared ENROLL_CODE
+ *   { password, revoke: <sel> }   -> revoke by username or masked handle (admin only)
+ *
+ * Two credentials with different power: ADMIN_PASSWORD can do everything, while
+ * ENROLL_CODE can ONLY mint — that is what the mod's `/snipe login` sends, so a
+ * friend can enrol without being able to revoke anyone or touch the Hypixel key.
  *
  * The username is a LABEL for the person the token was handed to — it lets each
  * token be revoked on its own — not a verified assertion of who is connecting.
  * The uuid, resolved best-effort, is stored for future player-scoped filtering.
  */
 async function issueStreamToken(req) {
-  if (!writeEnabled()) throw new HttpError(503, 'Token issuance is disabled: the server has no ADMIN_PASSWORD set.');
+  if (!writeEnabled() && !enrollEnabled()) {
+    throw new HttpError(503, 'Token issuance is disabled: set ADMIN_PASSWORD or ENROLL_CODE.');
+  }
   const body = await readJsonBody(req);
-  if (!passwordOk(body.password)) throw new HttpError(401, 'Wrong password.');
+  const isAdmin = passwordOk(body.password);
+  const isEnroll = enrollOk(body.code);
+  if (!isAdmin && !isEnroll) throw new HttpError(401, 'Wrong password or enrol code.');
 
   if (body.revoke != null && body.revoke !== '') {
+    if (!isAdmin) throw new HttpError(403, 'Revoking a token requires the admin password.');
     const selector = String(body.revoke).trim();
     const n = settings.revokeStreamToken(selector);
     if (!n) throw new HttpError(404, `No active token matched "${selector}".`);
@@ -269,7 +280,11 @@ async function issueStreamToken(req) {
   }
 
   const token = settings.issueStreamToken({ username, uuid });
-  return { token, username, uuid, ...settings.streamTokenStatus() };
+  // Enrol responses stay minimal (the mod only needs the token); the admin path
+  // also gets the full masked listing back for the dashboard.
+  return isAdmin
+    ? { token, username, uuid, ...settings.streamTokenStatus() }
+    : { token, username };
 }
 
 /**
@@ -481,7 +496,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST') return send(200, await issueStreamToken(req));
       // Status only — a masked listing of who holds a token; the tokens
       // themselves are shown once, at issue time.
-      return send(200, { ...settings.streamTokenStatus(), writable: writeEnabled() });
+      return send(200, { ...settings.streamTokenStatus(), writable: writeEnabled(), enrollOpen: enrollEnabled() });
     }
 
     if (p === '/alerts/stream') {
