@@ -73,7 +73,9 @@ button {
 
 .container {
   width: 100%;
-  max-width: 1120px;
+  /* Wider than the old 1120px so the main column + Outstanding sidebar have
+     room; the leftover is the centered side gutter on very wide screens. */
+  max-width: 1400px;
   margin: 0 auto;
   padding: 24px;
   flex: 1;
