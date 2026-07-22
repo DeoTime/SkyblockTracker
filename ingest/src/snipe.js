@@ -49,7 +49,10 @@ export function loadSnipeConfig(env = process.env) {
 
   return {
     watch,
-    intervalMs: num(env.SNIPE_INTERVAL_MS, 15_000),
+    // Poll page 0 this often just to spot Hypixel's ~60s feed refresh; the heavy
+    // full scan only runs when lastUpdated actually advances.
+    intervalMs: num(env.SNIPE_INTERVAL_MS, 5_000),
+    pageConcurrency: num(env.SNIPE_PAGE_CONCURRENCY, 6),
     // Firehose: emit EVERY new BIN listing for a watched item (still id-confirmed
     // + deduped), leaving all the "is it worth it" thresholding to the client mod.
     // Off -> the server-side drop/profit/margin gates below apply.
@@ -241,14 +244,25 @@ export function makeSnipe(db, log, cfg) {
 
     const byItem = new Map();
     collectMatches(first.auctions ?? [], byItem);
-    for (let p = 1; p < pages; p++) {
-      try {
-        const body = await getJson(`/skyblock/auctions?page=${p}`);
-        if (body?.auctions) collectMatches(body.auctions, byItem);
-      } catch {
-        /* one flaky page shouldn't abort the whole scan — next cycle recovers */
+
+    // Fetch the remaining pages with a bounded worker pool. Each page is filtered
+    // and discarded immediately (collectMatches keeps only the handful of matches),
+    // so peak memory stays ~pageConcurrency pages — not the whole AH — while the
+    // wall-clock scan drops from ~90 sequential requests to roughly pages/lanes.
+    let nextPage = 1;
+    const worker = async () => {
+      while (nextPage < pages) {
+        const p = nextPage++;
+        try {
+          const body = await getJson(`/skyblock/auctions?page=${p}`);
+          if (body?.auctions) collectMatches(body.auctions, byItem);
+        } catch {
+          /* one flaky page shouldn't abort the whole scan — next cycle recovers */
+        }
       }
-    }
+    };
+    const lanes = Math.max(1, Math.min(cfg.pageConcurrency, pages - 1));
+    await Promise.all(Array.from({ length: lanes }, worker));
 
     const now = Date.now();
     let fired = 0;
