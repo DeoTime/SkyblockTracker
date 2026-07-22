@@ -1,5 +1,6 @@
 import { openDb, makeStatements } from './db.js';
 import { decodeItem } from './decode.js';
+import { loadSnipeConfig, makeSnipe } from './snipe.js';
 
 /**
  * Continuous capture of Hypixel SkyBlock sales and bazaar prices.
@@ -178,12 +179,16 @@ async function loop(name, fn, interval) {
   }
 }
 
+const ALERT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 setInterval(
   () => {
     try {
       const cut = Date.now() - SEEN_TTL_MS;
       const n = st.pruneSeen.run(cut).changes;
       if (n) log(`pruned ${n} dedupe keys`);
+      const a = st.pruneAlerts.run(Date.now() - ALERT_TTL_MS).changes;
+      if (a) log(`pruned ${a} old snipe alerts`);
     } catch (err) {
       log(`prune ERROR: ${err.message}`);
     }
@@ -195,10 +200,26 @@ log(`starting — db ${DB_PATH}`);
 log(`tracking ${TRACKED.size} sellers: ${[...TRACKED].map((u) => u.slice(0, 8)).join(', ')}`);
 log(`ended every ${ENDED_INTERVAL}ms, bazaar every ${BAZAAR_INTERVAL}ms, no API key required`);
 
-await Promise.all([
+const loops = [
   loop('ended', pollEnded, ENDED_INTERVAL),
   loop('bazaar', pollBazaar, BAZAAR_INTERVAL),
-]);
+];
+
+const snipeCfg = loadSnipeConfig();
+if (snipeCfg) {
+  const pollSnipe = makeSnipe(db, log, snipeCfg);
+  loops.push(loop('snipe', pollSnipe, snipeCfg.intervalMs));
+  log(
+    `snipe: watching ${snipeCfg.watch.map((w) => w.id).join(', ')} — ` +
+      `drop>=${Math.round(snipeCfg.dropThreshold * 100)}%, minProfit ${snipeCfg.minProfit.toLocaleString('en-US')}` +
+      (snipeCfg.dryRun ? ' [DRY RUN]' : '') +
+      (snipeCfg.webhookUrl ? ' + webhook' : ''),
+  );
+} else {
+  log('snipe: disabled (set SNIPE_ENABLED=1 to enable)');
+}
+
+await Promise.all(loops);
 
 log('stopped cleanly');
 db.close();

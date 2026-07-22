@@ -18,15 +18,15 @@ NAME="skyblock-ingest"
 
 TRACKED="${TRACKED_UUIDS:-826bf8088bf9406a88b1bf2242f1d317,b7e55bf27a754acc9f105cb5472a6997}"
 
-echo "==> packaging (excluding node_modules — host is aarch64)"
-tar czf /tmp/ingest.tar.gz \
-  --exclude=node_modules --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' \
-  -C "$(dirname "$0")/.." ingest
-
-echo "==> uploading to $HOST"
-scp -q /tmp/ingest.tar.gz "$HOST:/tmp/ingest.tar.gz"
-ssh "$HOST" "mkdir -p $REMOTE_DIR && tar xzf /tmp/ingest.tar.gz -C $REMOTE_DIR --strip-components=1 && rm /tmp/ingest.tar.gz"
-rm -f /tmp/ingest.tar.gz
+echo "==> packaging + uploading (streamed over ssh)"
+# Pipe the tarball straight over ssh rather than writing a local temp file and
+# scp-ing it: on Windows Git Bash, tar is MSYS but scp is Win32 OpenSSH and the
+# two disagree about what "/tmp" means, so the scp could not find the file tar
+# wrote. A pipe has no local path to disagree on. Same as api/deploy.sh.
+ssh "$HOST" "mkdir -p $REMOTE_DIR"
+tar czf - --exclude=node_modules --exclude='*.db' --exclude='*.db-wal' --exclude='*.db-shm' \
+  -C "$(dirname "$0")/.." ingest \
+  | ssh "$HOST" "tar xzf - -C $REMOTE_DIR --strip-components=1"
 
 echo "==> building image (better-sqlite3 compiles from source on ARM; ~3 min)"
 ssh "$HOST" "cd $REMOTE_DIR && docker build -t ${NAME}:latest ."
@@ -46,6 +46,14 @@ ssh "$HOST" "docker run -d \
   -e ENDED_INTERVAL_MS=20000 \
   -e BAZAAR_INTERVAL_MS=60000 \
   -e DB_PATH=/data/skyblock.db \
+  -e SNIPE_ENABLED='${SNIPE_ENABLED:-0}' \
+  -e SNIPE_WATCH='${SNIPE_WATCH:-ETHERWARP_MERGER=Etherwarp Merger}' \
+  -e SNIPE_DROP_THRESHOLD='${SNIPE_DROP_THRESHOLD:-0.35}' \
+  -e SNIPE_MIN_PROFIT='${SNIPE_MIN_PROFIT:-2000000}' \
+  -e SNIPE_MIN_MARGIN_PCT='${SNIPE_MIN_MARGIN_PCT:-25}' \
+  -e SNIPE_WEBHOOK_URL='${SNIPE_WEBHOOK_URL:-}' \
+  -e SNIPE_WEBHOOK_SECRET='${SNIPE_WEBHOOK_SECRET:-}' \
+  -e SNIPE_DRY_RUN='${SNIPE_DRY_RUN:-0}' \
   -e TZ=UTC \
   --memory 512m \
   --cpus 0.5 \

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { timingSafeEqual, createHash } from 'node:crypto';
+import { timingSafeEqual, createHash, randomBytes } from 'node:crypto';
 
 /**
  * Server-side settings, including the Hypixel API key.
@@ -42,6 +42,22 @@ export function passwordOk(supplied) {
 
 export const writeEnabled = () => WRITE_PASSWORD.length > 0;
 
+/**
+ * Constant-time compare of a supplied secret against a stored one. Used for the
+ * alert-stream bearer token; hashing first keeps timingSafeEqual on equal-length
+ * buffers and hides the token's length.
+ */
+export function secretMatches(supplied, stored) {
+  if (!stored) return false;
+  if (typeof supplied !== 'string' || supplied.length === 0) return false;
+  const a = createHash('sha256').update(supplied).digest();
+  const b = createHash('sha256').update(stored).digest();
+  return timingSafeEqual(a, b);
+}
+
+/** A fresh opaque bearer token for the alert stream. */
+export const newToken = () => randomBytes(24).toString('hex');
+
 /** Hypixel keys are UUIDs. Rejects obvious junk before spending a request. */
 export const looksLikeKey = (k) =>
   typeof k === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(k.trim());
@@ -68,6 +84,16 @@ export function makeSettingsStore(db) {
         : { configured: false, masked: null, updatedAt: null };
     },
     setApiKey: (key) => put.run('hypixel_api_key', key.trim(), Date.now()),
+
+    /** Bearer token the Minecraft mod presents to read the alert stream. */
+    streamToken: () => get.get('stream_token')?.value ?? null,
+    streamTokenStatus: () => {
+      const row = get.get('stream_token');
+      return row
+        ? { configured: true, masked: maskKey(row.value), updatedAt: new Date(row.updated_at).toISOString() }
+        : { configured: false, masked: null, updatedAt: null };
+    },
+    setStreamToken: (token) => put.run('stream_token', token, Date.now()),
   };
 }
 

@@ -10,6 +10,8 @@ import {
   writeEnabled,
   looksLikeKey,
   verifyKey,
+  secretMatches,
+  newToken,
 } from './settings.js';
 
 /**
@@ -179,6 +181,126 @@ async function pending(username) {
   return { player, generatedAt: new Date().toISOString(), listings, totals: summarizePending(listings) };
 }
 
+/* ---- snipe alerts --------------------------------------------------- */
+
+/**
+ * Prepared statements over snipe_alerts, resolved lazily. The ingest creates
+ * that table; the API opens the DB readonly and may boot before the table
+ * exists (or before the ingest is redeployed). We therefore prepare on first
+ * use and cache only on success, so it starts working the moment the table
+ * appears — without a hard crash at startup.
+ */
+let alertStmts = null;
+function alerts() {
+  if (alertStmts) return alertStmts;
+  try {
+    alertStmts = {
+      recent: db.prepare('SELECT * FROM snipe_alerts ORDER BY id DESC LIMIT ?'),
+      since: db.prepare('SELECT * FROM snipe_alerts WHERE id > ? ORDER BY id ASC'),
+      maxId: db.prepare('SELECT COALESCE(MAX(id), 0) AS m FROM snipe_alerts'),
+    };
+  } catch {
+    alertStmts = null; // table not there yet — retry next request
+  }
+  return alertStmts;
+}
+
+/** The mod presents `Authorization: Bearer <token>`; compare in constant time. */
+function streamAuthOk(req) {
+  const stored = settings.streamToken();
+  if (!stored) return false;
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers['authorization'] ?? '');
+  return m ? secretMatches(m[1].trim(), stored) : false;
+}
+
+/** DB row -> the JSON the mod/webhook consume. Mirrors ingest toPayload(). */
+function alertPayload(r) {
+  return {
+    type: 'snipe',
+    item: { id: r.item_id, name: r.item_name ?? r.item_id },
+    auctionId: r.auction_id,
+    price: r.price,
+    baseline: r.baseline,
+    estResale: r.est_resale,
+    estProfit: r.est_profit,
+    estMarginPct: r.margin_pct,
+    seller: r.seller,
+    endsAt: r.ends_at ? new Date(r.ends_at).toISOString() : null,
+    detectedAt: new Date(r.detected_at).toISOString(),
+    viewCommand: `/viewauction ${r.auction_id}`,
+  };
+}
+
+/**
+ * Install (regenerate) the stream bearer token. Gated by ADMIN_PASSWORD, the
+ * same gate as the Hypixel key. The token is returned ONCE here — paste it into
+ * the mod; afterwards only a masked form is ever shown.
+ */
+async function issueStreamToken(req) {
+  if (!writeEnabled()) throw new HttpError(503, 'Token issuance is disabled: the server has no ADMIN_PASSWORD set.');
+  const body = await readJsonBody(req);
+  if (!passwordOk(body.password)) throw new HttpError(401, 'Wrong password.');
+
+  const token = newToken();
+  settings.setStreamToken(token);
+  return { ...settings.streamTokenStatus(), token };
+}
+
+/**
+ * Server-Sent-Events stream of NEW alerts. Writes to the socket directly and
+ * holds it open, so it bypasses the JSON send() path. Starts from the current
+ * max id (history is the /alerts endpoint, not this one) and polls once a
+ * second; a comment ping every 20s keeps the tunnel from idling the socket out.
+ */
+function startStream(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': ORIGIN,
+  });
+  res.write(': connected\n\n');
+
+  // Prime the cursor to the current max exactly once, so the client gets only
+  // alerts that arrive AFTER it connects (history lives at /alerts). `primed`
+  // separates "table empty" (cursor 0 is correct, stream id>0) from "table not
+  // created yet" (wait, then baseline once it appears) — without it the first
+  // ever alert would be skipped.
+  let cursor = 0;
+  let primed = false;
+  const first = alerts();
+  if (first) {
+    cursor = first.maxId.get().m;
+    primed = true;
+  }
+
+  const poll = setInterval(() => {
+    try {
+      const a = alerts();
+      if (!a) return;
+      if (!primed) {
+        cursor = a.maxId.get().m; // table just appeared: baseline once, skip history
+        primed = true;
+      }
+      for (const row of a.since.all(cursor)) {
+        cursor = row.id;
+        res.write(`data: ${JSON.stringify(alertPayload(row))}\n\n`);
+      }
+    } catch {
+      /* transient read error — try again next tick */
+    }
+  }, 1000);
+
+  const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
+
+  const stop = () => {
+    clearInterval(poll);
+    clearInterval(ping);
+  };
+  req.on('close', stop);
+  req.on('error', stop);
+}
+
 async function flipDetail(auctionUuid) {
   const row = qSale.get(auctionUuid);
   if (!row) throw new HttpError(404, 'That flip is not in the database.');
@@ -305,7 +427,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': ORIGIN,
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Accept, Content-Type',
+      'Access-Control-Allow-Headers': 'Accept, Content-Type, Authorization',
     });
     return res.end();
   }
@@ -313,8 +435,9 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname.replace(/^\/api/, '').replace(/\/+$/, '') || '/';
   const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
 
-  // POST exists only to install a key; everything else is a read.
-  if (req.method === 'POST' && p !== '/key') {
+  // POST exists only to install a key or (re)issue the stream token; the rest are reads.
+  const POST_PATHS = new Set(['/key', '/alerts/token']);
+  if (req.method === 'POST' && !POST_PATHS.has(p)) {
     return send(405, { error: 'Only GET is supported on this endpoint.' });
   }
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -326,6 +449,24 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST') return send(200, await putApiKey(req));
       // Status only — the key itself is never sent back over the wire.
       return send(200, { ...settings.apiKeyStatus(), writable: writeEnabled() });
+    }
+
+    if (p === '/alerts/token') {
+      if (req.method === 'POST') return send(200, await issueStreamToken(req));
+      // Status only — the token itself is shown once, at issue time.
+      return send(200, { ...settings.streamTokenStatus(), writable: writeEnabled() });
+    }
+
+    if (p === '/alerts/stream') {
+      if (!streamAuthOk(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
+      return startStream(req, res); // holds the socket open; no send()
+    }
+
+    if (p === '/alerts') {
+      if (!streamAuthOk(req)) throw new HttpError(401, 'Missing or invalid bearer token.');
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
+      const rows = alerts()?.recent.all(limit) ?? [];
+      return send(200, { alerts: rows.map(alertPayload) });
     }
 
     if (p === '/sweep') {
@@ -378,6 +519,11 @@ const server = http.createServer(async (req, res) => {
     send(500, { error: 'Could not build that response. The server log has details.' });
   }
 });
+
+// Node defaults requestTimeout to 5 min, which would sever the SSE stream.
+// The stream is meant to stay open; disable the per-request cap. Keep-alive
+// pings (and the mod's own reconnect) handle genuinely dead sockets.
+server.requestTimeout = 0;
 
 server.listen(PORT, HOST, () => console.log(`api listening on ${HOST}:${PORT} (db ${DB_PATH})`));
 

@@ -86,6 +86,25 @@ export function openDb(path) {
       fresh     INTEGER,
       note      TEXT
     );
+
+    -- Underpriced live listings detected by the snipe scanner. The read API
+    -- streams new rows (by ascending id) to the Minecraft mod. auction_id is
+    -- UNIQUE so a listing still up next scan cannot alert twice.
+    CREATE TABLE IF NOT EXISTS snipe_alerts (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      auction_id  TEXT UNIQUE NOT NULL,
+      item_id     TEXT NOT NULL,
+      item_name   TEXT,
+      price       INTEGER NOT NULL,
+      baseline    INTEGER NOT NULL,
+      est_resale  INTEGER NOT NULL,
+      est_profit  INTEGER NOT NULL,
+      margin_pct  REAL NOT NULL,
+      seller      TEXT,
+      ends_at     INTEGER,
+      detected_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_snipe_detected ON snipe_alerts(detected_at DESC);
   `);
 
   return db;
@@ -114,6 +133,7 @@ export function makeStatements(db) {
     seen: db.prepare('INSERT OR IGNORE INTO seen_auctions (auction_id, seen_at) VALUES (?, ?)'),
     wasSeen: db.prepare('SELECT 1 FROM seen_auctions WHERE auction_id = ?'),
     pruneSeen: db.prepare('DELETE FROM seen_auctions WHERE seen_at < ?'),
+    pruneAlerts: db.prepare('DELETE FROM snipe_alerts WHERE detected_at < ?'),
 
     lastBazaar: db.prepare(
       'SELECT buy_price, sell_price FROM bazaar_snapshot WHERE item_id = ? ORDER BY ts DESC LIMIT 1',
