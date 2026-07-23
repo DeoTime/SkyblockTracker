@@ -109,13 +109,21 @@ export function saleWebhookBody(flip, mtd, { chartUrl = null, series = null } = 
   return { embeds: [embed] };
 }
 
-/** POST a webhook body. https + redirect:error is the SSRF guard; best-effort. */
+/**
+ * POST a webhook body. https + redirect:error is the SSRF guard. Throws with
+ * Discord's status + body on a non-2xx, so a rejected message (e.g. an over-long
+ * embed/image URL) is logged instead of silently vanishing.
+ */
 export async function postWebhook(url, body) {
-  await fetch(url, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     redirect: 'error',
     signal: AbortSignal.timeout(8000),
   });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Discord ${res.status}: ${detail.slice(0, 300)}`);
+  }
 }
