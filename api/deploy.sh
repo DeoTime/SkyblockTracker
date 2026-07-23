@@ -26,6 +26,13 @@
 #
 # Unset -> mod self-enrolment is closed (existing tokens keep working; only new
 # `/snipe login` calls fail). Pass it every deploy you want enrolment open.
+#
+# SALE_WEBHOOK_URL is a Discord webhook the API posts to on every new tracked
+# sale (item, profit, month-to-date total + graph). Also env-only, never
+# committed. Unset -> no notifications. SALE_CHART=0 swaps the QuickChart image
+# for an inline sparkline (no external image service).
+#
+#   ADMIN_PASSWORD='…' SALE_WEBHOOK_URL='https://discord.com/api/webhooks/…' ./deploy.sh nerfchess
 set -euo pipefail
 
 HOST="${1:-nerfchess}"
@@ -69,6 +76,8 @@ ssh "$HOST" "docker run -d \
   -e CORS_ORIGIN='${CORS_ORIGIN:-*}' \
   -e ADMIN_PASSWORD='${ADMIN_PASSWORD:-}' \
   -e ENROLL_CODE='${ENROLL_CODE:-}' \
+  -e SALE_WEBHOOK_URL='${SALE_WEBHOOK_URL:-}' \
+  -e SALE_CHART='${SALE_CHART:-1}' \
   -e TZ=UTC \
   --memory 1g \
   --cpus 0.5 \

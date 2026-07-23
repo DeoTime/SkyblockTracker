@@ -4,6 +4,13 @@ import { buildFlip, buildPending, summarizePending, summarize, profitSeries, byI
 import { itemMetadata } from './prices.js';
 import { sweep, playerAuctions } from './sweep.js';
 import {
+  loadSaleNotifyConfig,
+  saleWebhookBody,
+  quickChartUrl,
+  postWebhook,
+  monthStartUtc,
+} from './notify.js';
+import {
   openSettings,
   makeSettingsStore,
   passwordOk,
@@ -121,6 +128,69 @@ async function mapLimit(items, limit, fn) {
 }
 
 const flipsFor = (uuid, from) => mapLimit(qSales.all(uuid, from), FLIP_CONCURRENCY, (r) => flipOf(r));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Discord sale notifier. Watches tracked_sales for rows the ingest has newly
+ * written and posts one embed per sale — item, profit, month-to-date cumulative
+ * profit, and an MTD graph. Runs only if SALE_WEBHOOK_URL is set.
+ *
+ * The cursor is seeded to the current max on boot, so a restart never replays
+ * history or double-posts; only sales recorded from now on are announced.
+ * tracked_sales holds ONLY tracked sellers, so "MTD across all rows this month"
+ * is exactly the tracked total.
+ */
+function startSaleWatcher() {
+  const cfg = loadSaleNotifyConfig();
+  if (!cfg) {
+    console.log('sale webhook: disabled (set SALE_WEBHOOK_URL to enable)');
+    return;
+  }
+
+  const qNew = db.prepare(
+    'SELECT * FROM tracked_sales WHERE ingested_at > ? ORDER BY ingested_at ASC, rowid ASC',
+  );
+  const qMonth = db.prepare('SELECT * FROM tracked_sales WHERE sold_at >= ? ORDER BY sold_at ASC');
+  let cursor = db.prepare('SELECT COALESCE(MAX(ingested_at), 0) m FROM tracked_sales').get().m;
+
+  let running = false;
+  const tick = async () => {
+    if (running) return; // a slow chart/webhook must not overlap the next tick
+    running = true;
+    try {
+      const fresh = qNew.all(cursor);
+      if (fresh.length === 0) return;
+      cursor = fresh.reduce((m, r) => Math.max(m, r.ingested_at), cursor);
+
+      // Build MTD once for the whole batch (flipOf is cached, so this is cheap
+      // after the first pass), then attach the same figures to each sale.
+      const start = monthStartUtc();
+      const monthFlips = await mapLimit(qMonth.all(start), FLIP_CONCURRENCY, (r) => flipOf(r));
+      const mtd = { total: monthFlips.reduce((a, f) => a + f.netProfit, 0), count: monthFlips.length };
+      const series = profitSeries(monthFlips, start);
+      const chartUrl = cfg.chart ? quickChartUrl(cfg.chartBase, series) : null;
+
+      for (const row of fresh) {
+        try {
+          const flip = await flipOf(row);
+          await postWebhook(cfg.url, saleWebhookBody(flip, mtd, { chartUrl, series }));
+          await sleep(1200); // stay under Discord's per-webhook rate limit
+        } catch (err) {
+          console.error(`sale webhook post failed for ${row.auction_id}: ${err.message}`);
+        }
+      }
+      console.log(`sale webhook: posted ${fresh.length} sale(s), MTD ${mtd.total}`);
+    } catch (err) {
+      console.error(`sale watcher error: ${err.message}`);
+    } finally {
+      running = false;
+    }
+  };
+
+  setInterval(tick, cfg.intervalMs).unref();
+  console.log(`sale webhook: on, polling every ${cfg.intervalMs}ms${cfg.chart ? ' + MTD chart' : ' (sparkline)'}`);
+}
 
 /* ---- handlers ------------------------------------------------------- */
 
@@ -567,7 +637,10 @@ const server = http.createServer(async (req, res) => {
 // pings (and the mod's own reconnect) handle genuinely dead sockets.
 server.requestTimeout = 0;
 
-server.listen(PORT, HOST, () => console.log(`api listening on ${HOST}:${PORT} (db ${DB_PATH})`));
+server.listen(PORT, HOST, () => {
+  console.log(`api listening on ${HOST}:${PORT} (db ${DB_PATH})`);
+  startSaleWatcher();
+});
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => server.close(() => { db.close(); process.exit(0); }));
