@@ -129,6 +129,13 @@ async function mapLimit(items, limit, fn) {
 
 const flipsFor = (uuid, from) => mapLimit(qSales.all(uuid, from), FLIP_CONCURRENCY, (r) => flipOf(r));
 
+/**
+ * Tag each flip with whether the operator has excluded it. flipOf hands back a
+ * cached, shared object, so we spread into a fresh one rather than mutating the
+ * cache — two dashboards must not stamp their exclusion state onto each other's.
+ */
+const markExcluded = (flips, excluded) => flips.map((f) => ({ ...f, excluded: excluded.has(f.auctionUuid) }));
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -199,14 +206,18 @@ async function dashboard(username, range) {
   if (!player) throw new HttpError(404, `No Minecraft account named "${username}".`);
 
   const from = rangeStart(range);
-  const flips = await flipsFor(player.uuid, from);
+  const flips = markExcluded(await flipsFor(player.uuid, from), settings.excludedFlips());
+  // Every aggregate is computed over the INCLUDED flips only — that is what
+  // "exclude from calculations" means. The table below still receives the full
+  // set (excluded rows marked) so they can be seen and re-included.
+  const counted = flips.filter((f) => !f.excluded);
 
   return {
     player,
     range,
-    stats: summarize(flips),
-    profitSeries: profitSeries(flips, from || undefined),
-    byItem: byItem(flips),
+    stats: summarize(counted),
+    profitSeries: profitSeries(counted, from || undefined),
+    byItem: byItem(counted),
     // The dashboard table shows every flip in the range, not a preview. Capped
     // only so a prolific seller cannot produce an unbounded payload; past that
     // the "View all" link takes over the paginated endpoint.
@@ -218,7 +229,7 @@ async function flipsPage(username, range, page, pageSize) {
   const player = await resolvePlayer(username);
   if (!player) throw new HttpError(404, `No Minecraft account named "${username}".`);
 
-  const all = await flipsFor(player.uuid, rangeStart(range));
+  const all = markExcluded(await flipsFor(player.uuid, rangeStart(range)), settings.excludedFlips());
   return {
     player,
     flips: all.slice(page * pageSize, page * pageSize + pageSize),
@@ -523,6 +534,26 @@ async function putApiKey(req) {
   };
 }
 
+/**
+ * Toggle a single flip's exclusion from the aggregates. Gated by the same admin
+ * password as key installation: it changes what every visitor to the dashboard
+ * sees, so it is a write, not a read. Body: { password, auctionId, excluded }.
+ */
+async function setExclusion(req) {
+  if (!writeEnabled()) {
+    throw new HttpError(503, 'Excluding flips is disabled: the server has no ADMIN_PASSWORD set.');
+  }
+  const body = await readJsonBody(req);
+  if (!passwordOk(body.password)) throw new HttpError(401, 'Wrong password.');
+
+  const auctionId = typeof body.auctionId === 'string' ? body.auctionId.trim() : '';
+  if (!auctionId) throw new HttpError(400, 'An auctionId is required.');
+
+  const excluded = body.excluded === true || body.excluded === 'true';
+  settings.setFlipExcluded(auctionId, excluded);
+  return { auctionId, excluded };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const send = (status, body) => {
@@ -547,7 +578,7 @@ const server = http.createServer(async (req, res) => {
   const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
 
   // POST exists only to install a key or (re)issue the stream token; the rest are reads.
-  const POST_PATHS = new Set(['/key', '/alerts/token']);
+  const POST_PATHS = new Set(['/key', '/alerts/token', '/exclusions']);
   if (req.method === 'POST' && !POST_PATHS.has(p)) {
     return send(405, { error: 'Only GET is supported on this endpoint.' });
   }
@@ -560,6 +591,13 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST') return send(200, await putApiKey(req));
       // Status only — the key itself is never sent back over the wire.
       return send(200, { ...settings.apiKeyStatus(), writable: writeEnabled() });
+    }
+
+    if (p === '/exclusions') {
+      if (req.method === 'POST') return send(200, await setExclusion(req));
+      // The current exclusion set, plus whether edits are possible at all, so the
+      // UI can disable its toggles when no ADMIN_PASSWORD is configured.
+      return send(200, { auctionIds: [...settings.excludedFlips()], writable: writeEnabled() });
     }
 
     if (p === '/alerts/token') {

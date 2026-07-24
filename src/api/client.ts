@@ -7,7 +7,14 @@ import type {
   PendingResponse,
   RangeKey,
 } from './types';
-import { mockDashboard, mockFlipDetail, mockFlips, mockItemHistory, mockPending } from './mock';
+import {
+  mockDashboard,
+  mockFlipDetail,
+  mockFlips,
+  mockItemHistory,
+  mockPending,
+  setMockExclusion,
+} from './mock';
 
 const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false';
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -73,6 +80,41 @@ export function fetchPending(username: string): Promise<PendingResponse> {
 export function fetchItemHistory(itemId: string, username?: string): Promise<ItemHistoryResponse> {
   const q = username ? `?player=${encodeURIComponent(username)}` : '';
   return get(`/items/${encodeURIComponent(itemId)}/history${q}`, () => mockItemHistory(itemId));
+}
+
+/**
+ * Exclude or re-include a flip from the aggregates. Persisted server-side and
+ * gated by the admin password, so subsequent dashboard/flip fetches come back
+ * with the calculations already refreshed. In mock mode it mutates an in-memory
+ * set instead, so the toggle is demonstrable without a backend or a password.
+ */
+export async function setFlipExcluded(
+  auctionUuid: string,
+  excluded: boolean,
+  password: string,
+): Promise<void> {
+  if (USE_MOCKS) {
+    await new Promise((r) => setTimeout(r, MOCK_DELAY));
+    setMockExclusion(auctionUuid, excluded);
+    return;
+  }
+
+  const res = await fetch(`${BASE}/exclusions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ auctionId: auctionUuid, excluded, password }),
+  });
+
+  if (!res.ok) {
+    let message = res.statusText;
+    try {
+      const body = (await res.json()) as { error?: string };
+      message = body.error ?? message;
+    } catch {
+      /* non-JSON error body — keep statusText */
+    }
+    throw new ApiError(message, res.status);
+  }
 }
 
 export const usingMocks = USE_MOCKS;

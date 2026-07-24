@@ -5,6 +5,8 @@ import type { RangeKey } from '../api/types';
 import { useAsync } from '../lib/useAsync';
 import { ErrorState, Loading } from '../components/Layout';
 import { FlipsTable } from '../components/FlipsTable';
+import { ExcludeBar } from '../components/ExcludeBar';
+import { useExclusions } from '../lib/useExclusions';
 
 const PAGE_SIZE = 50;
 
@@ -22,9 +24,12 @@ export function AllFlips() {
   const range = (params.get('range') as RangeKey) || 'all';
   const [page, setPage] = useState(0);
 
+  const { password, updatePassword, busyId, error: excludeError, refreshKey, toggle, canEdit } =
+    useExclusions();
+
   const { data, error, loading } = useAsync(
     () => fetchFlips(username, range, page, PAGE_SIZE),
-    [username, range, page],
+    [username, range, page, refreshKey],
   );
 
   function changeRange(next: RangeKey) {
@@ -47,7 +52,8 @@ export function AllFlips() {
           </p>
         </div>
 
-        <div className="filters">
+        <div className="filters" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <ExcludeBar password={password} onPassword={updatePassword} error={excludeError} />
           <div className="seg" role="group" aria-label="Time range">
             {RANGES.map((r) => (
               <button key={r.key} aria-pressed={range === r.key} onClick={() => changeRange(r.key)}>
@@ -91,7 +97,12 @@ export function AllFlips() {
             )}
           </div>
 
-          <FlipsTable flips={data.flips} />
+          <FlipsTable
+            flips={data.flips}
+            onToggleExclude={toggle}
+            excludeDisabled={!canEdit}
+            busyId={busyId}
+          />
         </div>
       )}
     </main>

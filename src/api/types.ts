@@ -118,6 +118,13 @@ export interface FlipSummary {
   profitPct: number;
   priceSource: PriceSource;
   bin: boolean;
+  /**
+   * True when the operator has excluded this flip from every aggregate. The flip
+   * still appears in the table (so it can be re-included); it just contributes
+   * nothing to net profit, revenue, fees, by-item totals or the charts. Absent on
+   * responses from an older backend, which is treated as "included".
+   */
+  excluded?: boolean;
 }
 
 export interface FlipDetail extends FlipSummary {

@@ -278,6 +278,23 @@ const POOL = buildPool();
 
 const RANGE_DAYS: Record<RangeKey, number> = { '7d': 7, '30d': 30, '90d': 90, all: 3650 };
 
+/**
+ * Flips the user has excluded in mock mode. Lives here (not localStorage) so it
+ * resets on reload like the rest of the deterministic demo data, while still
+ * proving the exclude toggle end-to-end without a backend.
+ */
+const mockExclusions = new Set<string>();
+
+export function setMockExclusion(auctionUuid: string, excluded: boolean): void {
+  if (excluded) mockExclusions.add(auctionUuid);
+  else mockExclusions.delete(auctionUuid);
+}
+
+/** A summary tagged with its current mock exclusion state. */
+function withExclusion(f: FlipDetail): FlipSummary {
+  return { ...strip(f), excluded: mockExclusions.has(f.auctionUuid) };
+}
+
 function strip(f: FlipDetail): FlipSummary {
   const {
     ingredients: _i,
@@ -296,7 +313,9 @@ function strip(f: FlipDetail): FlipSummary {
 
 export function mockDashboard(username: string, range: RangeKey): DashboardResponse {
   const cutoff = NOW - RANGE_DAYS[range] * DAY;
-  const flips = POOL.filter((f) => +new Date(f.soldAt) >= cutoff);
+  const inRange = POOL.filter((f) => +new Date(f.soldAt) >= cutoff);
+  // Aggregates count only the included flips; the table below keeps the full set.
+  const flips = inRange.filter((f) => !mockExclusions.has(f.auctionUuid));
 
   const netProfit = sum(flips, (f) => f.netProfit);
   const grossRevenue = sum(flips, (f) => f.salePrice);
@@ -327,7 +346,7 @@ export function mockDashboard(username: string, range: RangeKey): DashboardRespo
     stats,
     profitSeries: buildSeries(flips, cutoff),
     byItem: buildByItem(flips),
-    recentFlips: flips.slice(0, 500).map(strip),
+    recentFlips: inRange.slice(0, 500).map(withExclusion),
   };
 }
 
@@ -343,7 +362,7 @@ export function mockFlips(
 
   return {
     player: { uuid: '0d9b3f2c-5a4e-4d1b-9a7c-2e8f6b1d4c3a', username },
-    flips: flips.slice(start, start + pageSize).map(strip),
+    flips: flips.slice(start, start + pageSize).map(withExclusion),
     page,
     pageSize,
     totalFlips: flips.length,

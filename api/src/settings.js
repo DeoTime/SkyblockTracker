@@ -43,6 +43,16 @@ export function openSettings(path) {
       revoked_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_stream_tokens_user ON stream_tokens(username);
+
+    -- Flips the operator has hidden from every aggregate. The row is a curation
+    -- decision (a mispriced sale, a gift, a test listing), so it must survive
+    -- restarts — hence here, in the writable settings DB, and not in memory. The
+    -- sale itself still lives untouched in the readonly ingest DB; this only
+    -- controls whether it counts.
+    CREATE TABLE IF NOT EXISTS excluded_flips (
+      auction_id TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL
+    );
   `);
   return db;
 }
@@ -121,6 +131,10 @@ export function makeSettingsStore(db) {
     `UPDATE stream_tokens SET revoked_at = ? WHERE masked = ? AND revoked_at IS NULL`,
   );
 
+  const insExcl = db.prepare(`INSERT OR IGNORE INTO excluded_flips (auction_id, created_at) VALUES (?, ?)`);
+  const delExcl = db.prepare(`DELETE FROM excluded_flips WHERE auction_id = ?`);
+  const allExcl = db.prepare(`SELECT auction_id FROM excluded_flips`);
+
   // One-time migration: an earlier build stored a single global token in the
   // settings table. Fold it into the registry under 'legacy' so it keeps working
   // until the owner reissues, then drop the old row.
@@ -181,6 +195,19 @@ export function makeSettingsStore(db) {
       const now = Date.now();
       const byUser = revokeByUser.run(now, selector).changes;
       return byUser || revokeByMask.run(now, selector).changes;
+    },
+
+    /** The set of auction ids the operator has excluded from every aggregate. */
+    excludedFlips: () => new Set(allExcl.all().map((r) => r.auction_id)),
+
+    /**
+     * Add or remove a flip from the exclusion set. Idempotent — excluding an
+     * already-excluded flip (or including an already-included one) is a no-op.
+     */
+    setFlipExcluded: (auctionId, excluded) => {
+      if (excluded) insExcl.run(auctionId, Date.now());
+      else delExcl.run(auctionId);
+      return excluded;
     },
 
     /** Masked listing of all tokens (active first) — no secret is ever returned. */

@@ -17,13 +17,23 @@ type SortKey = 'itemName' | 'soldAt' | 'costBasis' | 'salePrice' | 'ahFees' | 'n
 interface Props {
   flips: FlipSummary[];
   showItemLink?: boolean;
+  /**
+   * When provided, each row gets an "included" checkbox. Unchecking a row calls
+   * this with `nextExcluded = true`, dropping the flip from every calculation.
+   * Omit it and the column is not rendered at all (e.g. the item-history table).
+   */
+  onToggleExclude?: (flip: FlipSummary, nextExcluded: boolean) => void;
+  /** True while no admin password is set — the checkboxes render disabled. */
+  excludeDisabled?: boolean;
+  /** The auction id of the row currently mid-request, so it can show as busy. */
+  busyId?: string | null;
 }
 
 /**
  * The tabular view of the same data the charts encode — this is what makes the
  * numbers readable without relying on color at all.
  */
-export function FlipsTable({ flips, showItemLink = true }: Props) {
+export function FlipsTable({ flips, showItemLink = true, onToggleExclude, excludeDisabled = false, busyId = null }: Props) {
   const [sort, setSort] = useState<SortKey>('soldAt');
   const [desc, setDesc] = useState(true);
 
@@ -75,6 +85,11 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
       <table>
         <thead>
           <tr>
+            {onToggleExclude && (
+              <th className="num" title="Uncheck a flip to exclude it from every total and chart">
+                Incl.
+              </th>
+            )}
             {header('itemName', 'Item', 'left')}
             {header('soldAt', 'Sold')}
             {header('costBasis', 'Cost basis')}
@@ -86,7 +101,24 @@ export function FlipsTable({ flips, showItemLink = true }: Props) {
         </thead>
         <tbody>
           {sorted.map((f) => (
-            <tr key={f.auctionUuid}>
+            <tr key={f.auctionUuid} style={f.excluded ? { opacity: 0.45 } : undefined}>
+              {onToggleExclude && (
+                <td className="num">
+                  <input
+                    type="checkbox"
+                    checked={!f.excluded}
+                    disabled={excludeDisabled || busyId === f.auctionUuid}
+                    onChange={() => onToggleExclude(f, !f.excluded)}
+                    title={
+                      f.excluded
+                        ? 'Excluded from calculations — check to include'
+                        : 'Included in calculations — uncheck to exclude'
+                    }
+                    aria-label={f.excluded ? `Include ${f.itemName} in calculations` : `Exclude ${f.itemName} from calculations`}
+                    style={{ cursor: excludeDisabled ? 'not-allowed' : 'pointer' }}
+                  />
+                </td>
+              )}
               <td>
                 <div className="item-cell">
                   <Link to={`/flip/${f.auctionUuid}`} className="link" title={f.itemName}>

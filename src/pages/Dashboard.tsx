@@ -8,6 +8,8 @@ import { ErrorState, Loading } from '../components/Layout';
 import { HeroFigure, StatTile } from '../components/Stat';
 import { Sparkline } from '../components/Sparkline';
 import { FlipsTable } from '../components/FlipsTable';
+import { ExcludeBar } from '../components/ExcludeBar';
+import { useExclusions } from '../lib/useExclusions';
 import { OutstandingBox } from '../components/OutstandingBox';
 import { ProfitAreaChart } from '../components/charts/ProfitAreaChart';
 import { ItemProfitBars } from '../components/charts/ItemProfitBars';
@@ -24,7 +26,13 @@ export function Dashboard() {
   const [range, setRange] = useState<RangeKey>('30d');
   const navigate = useNavigate();
 
-  const { data, error, loading } = useAsync(() => fetchDashboard(username, range), [username, range]);
+  const { password, updatePassword, busyId, error: excludeError, refreshKey, toggle, canEdit } =
+    useExclusions();
+
+  const { data, error, loading } = useAsync(
+    () => fetchDashboard(username, range),
+    [username, range, refreshKey],
+  );
 
   return (
     <main className="container">
@@ -83,7 +91,9 @@ export function Dashboard() {
             </div>
 
             <div className="card">
-              <ProfitAreaChart flips={data.recentFlips} />
+              {/* The chart windows the flips itself, so hand it only the counted
+                  ones — an excluded flip must not move the cumulative line. */}
+              <ProfitAreaChart flips={data.recentFlips.filter((f) => !f.excluded)} />
             </div>
 
             <div className="grid grid-2">
@@ -146,14 +156,23 @@ export function Dashboard() {
               <div className="card-head">
                 <div>
                   <h2>Recent flips</h2>
+                  <p className="sub">Uncheck a flip to exclude it from the totals and charts.</p>
                 </div>
-                {data.stats.flipCount > data.recentFlips.length && (
-                  <Link className="btn-ghost" to={`/u/${encodeURIComponent(username)}/flips?range=${range}`}>
-                    View all {data.stats.flipCount} →
-                  </Link>
-                )}
+                <div className="filters" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                  <ExcludeBar password={password} onPassword={updatePassword} error={excludeError} />
+                  {data.stats.flipCount > data.recentFlips.filter((f) => !f.excluded).length && (
+                    <Link className="btn-ghost" to={`/u/${encodeURIComponent(username)}/flips?range=${range}`}>
+                      View all →
+                    </Link>
+                  )}
+                </div>
               </div>
-              <FlipsTable flips={data.recentFlips} />
+              <FlipsTable
+                flips={data.recentFlips}
+                onToggleExclude={toggle}
+                excludeDisabled={!canEdit}
+                busyId={busyId}
+              />
             </div>
           </div>
 

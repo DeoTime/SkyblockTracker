@@ -10,8 +10,9 @@
 #
 # Usage:  ./deploy.sh [ssh-host]      default host: nerfchess
 #
-# ADMIN_PASSWORD gates POST /api/key, the only write endpoint. It is read from
-# the environment and never stored in this repo:
+# ADMIN_PASSWORD gates the write endpoints — POST /api/key and POST
+# /api/exclusions (hiding a flip from the aggregates). It is read from the
+# environment and never stored in this repo:
 #
 #   ADMIN_PASSWORD='…' ./deploy.sh nerfchess
 #
