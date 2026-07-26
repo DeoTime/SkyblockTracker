@@ -5,6 +5,11 @@
  */
 
 import type {
+  CraftComponent,
+  CraftListing,
+  CraftNode,
+  CraftPlan,
+  CraftVariant,
   DashboardResponse,
   DashboardStats,
   FlipDetail,
@@ -495,4 +500,185 @@ function buildByItem(flips: FlipDetail[]): ItemAggregate[] {
   return [...map.values()]
     .map((a) => ({ ...a, avgMarginPct: a.avgMarginPct / a.flips }))
     .sort((a, b) => b.netProfit - a.netProfit);
+}
+
+/* -------------------------------------------------------------------- */
+/* Craft planner                                                         */
+/* -------------------------------------------------------------------- */
+
+/**
+ * A fixed Etherwarp Aspect of the Void build. Unlike the other mocks this one
+ * is not randomised: the page's whole point is a live price, so demo mode
+ * should show a plausible, stable shape and let the "Demo data" pill in the
+ * header do the disclosing rather than inventing a different number per load.
+ */
+const MOCK_NULL_OVOID = 150_000;
+const MOCK_REFINED_TITANIUM = 741_000;
+
+const leaf = (itemId: string, name: string, quantity: number, unitPrice: number): CraftNode => ({
+  itemId,
+  name,
+  quantity,
+  unitPrice,
+  totalPrice: Math.round(unitPrice * quantity),
+  via: 'bazaar',
+  children: [],
+});
+
+/** A short synthetic order book, so the listings box has something to render. */
+function mockListings(floor: number, count: number, step: number): CraftListing[] {
+  return Array.from({ length: count }, (_, i) => ({
+    auctionId: `mock-${floor}-${i}`,
+    price: floor + step * (i + 1),
+    endsAt: new Date(NOW + (i + 1) * 37 * 60_000).toISOString(),
+    clean: true,
+  }));
+}
+
+export function mockCraftPlan(itemId: string, variant: CraftVariant): CraftPlan {
+  const aoteChildren = [
+    leaf('ENCHANTED_EYE_OF_ENDER', 'Enchanted Eye of Ender', 32, 9_447),
+    leaf('ENCHANTED_DIAMOND', 'Enchanted Diamond', 1, 1_301),
+  ];
+  const aoteCost = aoteChildren.reduce((n, c) => n + (c.totalPrice ?? 0), 0);
+
+  const baseChildren = [
+    leaf('NULL_OVOID', 'Null Ovoid', 32, MOCK_NULL_OVOID),
+    {
+      itemId: 'ASPECT_OF_THE_END',
+      name: 'Aspect of the End',
+      quantity: 1,
+      unitPrice: aoteCost,
+      totalPrice: aoteCost,
+      via: 'craft' as const,
+      craftCost: aoteCost,
+      marketPrice: 450_000,
+      children: aoteChildren,
+    },
+  ];
+  const baseCost = baseChildren.reduce((n, c) => n + (c.totalPrice ?? 0), 0);
+
+  const conduitChildren = [
+    leaf('NULL_OVOID', 'Null Ovoid', 24, MOCK_NULL_OVOID),
+    leaf('REFINED_TITANIUM', 'Refined Titanium', 16, MOCK_REFINED_TITANIUM),
+  ];
+  const conduitCost = conduitChildren.reduce((n, c) => n + (c.totalPrice ?? 0), 0);
+
+  const base: CraftComponent = {
+    key: 'base',
+    itemId: 'ASPECT_OF_THE_VOID',
+    name: 'Aspect of the Void',
+    quantity: 1,
+    requires: null,
+    craftCost: baseCost,
+    marketPrice: 5_999_999,
+    marketListings: 190,
+    chosen: 'craft',
+    cost: baseCost,
+    nextCheapest: mockListings(5_999_999, 10, 130_000),
+    unpriced: [],
+    tree: {
+      itemId: 'ASPECT_OF_THE_VOID',
+      name: 'Aspect of the Void',
+      quantity: 1,
+      unitPrice: baseCost,
+      totalPrice: baseCost,
+      via: 'craft',
+      craftCost: baseCost,
+      marketPrice: 5_999_999,
+      children: baseChildren,
+    },
+  };
+
+  const conduit: CraftComponent = {
+    key: 'conduit',
+    itemId: 'ETHERWARP_CONDUIT',
+    name: 'Etherwarp Conduit',
+    quantity: 1,
+    requires: 'Enderman Slayer 7',
+    craftCost: conduitCost,
+    marketPrice: 17_820_448,
+    marketListings: 21,
+    chosen: 'craft',
+    cost: conduitCost,
+    nextCheapest: mockListings(17_820_448, 10, 240_000),
+    unpriced: [],
+    tree: {
+      itemId: 'ETHERWARP_CONDUIT',
+      name: 'Etherwarp Conduit',
+      quantity: 1,
+      unitPrice: conduitCost,
+      totalPrice: conduitCost,
+      via: 'craft',
+      craftCost: conduitCost,
+      marketPrice: 17_820_448,
+      children: conduitChildren,
+    },
+  };
+
+  // No recipe exists for the Merger — it is an auction-only purchase, and the
+  // reason craftOnly below is null.
+  const merger: CraftComponent = {
+    key: 'merger',
+    itemId: 'ETHERWARP_MERGER',
+    name: 'Etherwarp Merger',
+    quantity: 1,
+    requires: null,
+    craftCost: null,
+    marketPrice: 450_000,
+    marketListings: 47,
+    chosen: 'buy',
+    cost: 450_000,
+    nextCheapest: mockListings(450_000, 10, 21_000),
+    unpriced: [],
+    tree: {
+      itemId: 'ETHERWARP_MERGER',
+      name: 'Etherwarp Merger',
+      quantity: 1,
+      unitPrice: 450_000,
+      totalPrice: 450_000,
+      via: 'auction',
+      craftCost: null,
+      marketPrice: 450_000,
+      children: [],
+    },
+  };
+
+  const components = variant === 'etherwarp' ? [base, conduit, merger] : [base];
+  const total = components.reduce((n, c) => n + (c.cost ?? 0), 0);
+  const lowestBin = variant === 'etherwarp' ? 25_000_000 : 5_999_999;
+  const now = new Date(NOW).toISOString();
+
+  return {
+    itemId,
+    itemName: 'Aspect of the Void',
+    rarity: 'EPIC',
+    variant,
+    variantLabel: variant === 'etherwarp' ? 'Etherwarp' : 'Clean',
+    description:
+      variant === 'etherwarp'
+        ? 'Aspect of the Void with Etherwarp — the sword, a Conduit, and the Merger that fuses them.'
+        : 'A bare Aspect of the Void, straight off the crafting grid.',
+    generatedAt: now,
+    components,
+    total,
+    craftOnly: variant === 'etherwarp' ? null : baseCost,
+    unpriced: [],
+    market: {
+      lowestBin,
+      comparableListings: variant === 'etherwarp' ? 88 : 29,
+      cleanLowestBin: 5_999_999,
+      cleanListings: 29,
+      listings: 190,
+      savingsVsBuying: lowestBin - total,
+    },
+    freshness: {
+      bazaarAt: now,
+      bazaarAgeSeconds: 3,
+      auctionAt: now,
+      auctionAgeSeconds: 8,
+      auctionsScanned: 50_434,
+      auctionPages: 51,
+    },
+  };
 }

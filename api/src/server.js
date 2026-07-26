@@ -2,6 +2,7 @@ import http from 'node:http';
 import Database from 'better-sqlite3';
 import { buildFlip, buildPending, summarizePending, summarize, profitSeries, byItem, rangeStart } from './flips.js';
 import { itemMetadata } from './prices.js';
+import { craftPlan, variantKeys } from './craft.js';
 import { sweep, playerAuctions } from './sweep.js';
 import {
   loadSaleNotifyConfig,
@@ -617,6 +618,20 @@ const server = http.createServer(async (req, res) => {
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') ?? 50) || 50));
       const rows = alerts()?.recent.all(limit) ?? [];
       return send(200, { alerts: rows.map(alertPayload) });
+    }
+
+    if (p === '/craft') {
+      // Present-tense costing: live bazaar + live auction book, no DB read.
+      // Validate here rather than catching craftPlan's throw, so a Hypixel
+      // outage still surfaces as a 500 instead of being blamed on the client.
+      const variant = url.searchParams.get('variant') ?? 'etherwarp';
+      if (!variantKeys.includes(variant)) {
+        throw new HttpError(400, `Unknown variant "${variant}". Try one of: ${variantKeys.join(', ')}.`);
+      }
+      return send(200, await craftPlan({
+        itemId: url.searchParams.get('item') ?? 'ASPECT_OF_THE_VOID',
+        variant,
+      }));
     }
 
     if (p === '/sweep') {

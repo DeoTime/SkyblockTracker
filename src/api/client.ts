@@ -1,5 +1,7 @@
 import { ApiError } from './types';
 import type {
+  CraftPlan,
+  CraftVariant,
   DashboardResponse,
   FlipDetail,
   FlipsPage,
@@ -8,6 +10,7 @@ import type {
   RangeKey,
 } from './types';
 import {
+  mockCraftPlan,
   mockDashboard,
   mockFlipDetail,
   mockFlips,
@@ -75,6 +78,19 @@ export function fetchFlip(auctionUuid: string): Promise<FlipDetail> {
  */
 export function fetchPending(username: string): Promise<PendingResponse> {
   return get(`/players/${encodeURIComponent(username)}/pending`, () => mockPending(username));
+}
+
+/**
+ * What one costs to make right now. Unlike every other read here this one is
+ * present-tense — it prices against the live bazaar and a full sweep of the
+ * auction book, so the first call after the server's 60s cache expires takes
+ * several seconds. That is the ~50MB book being read, not a hung request.
+ */
+export function fetchCraftPlan(itemId: string, variant: CraftVariant): Promise<CraftPlan> {
+  return get(
+    `/craft?item=${encodeURIComponent(itemId)}&variant=${encodeURIComponent(variant)}`,
+    () => mockCraftPlan(itemId, variant),
+  );
 }
 
 export function fetchItemHistory(itemId: string, username?: string): Promise<ItemHistoryResponse> {

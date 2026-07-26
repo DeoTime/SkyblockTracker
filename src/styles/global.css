@@ -497,11 +497,108 @@ a:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- craft tree ---------- */
+
+.craft-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13.5px;
+}
+
+/* The disclosure arrow keeps its width when a node is a leaf, so names stay
+   aligned in a column whether or not they can be opened. */
+.craft-toggle {
+  flex: none;
+  width: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1;
+  text-align: left;
+}
+
+.craft-toggle:not(:disabled):hover {
+  color: var(--text-primary);
+}
+
+/* Leaf spacer: same box as the button, nothing drawn in it. */
+span.craft-toggle {
+  display: inline-block;
+}
+
+/* Shrinkable, so a deep tier ellipsises its name rather than pushing the price
+   off the row. The prices are the point; the name can truncate. */
+.craft-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The dashed leader from the sketch: fills whatever space is left between the
+   name and its price, so the eye can track across a wide row. */
+.craft-lead {
+  flex: 1;
+  min-width: 12px;
+  border-bottom: 1px dashed var(--gridline);
+  transform: translateY(-4px);
+}
+
+.craft-val {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.craft-alt {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* The other choice is cheaper than the one currently costed — the signal that
+   this tier is worth flipping. */
+.craft-alt.is-cheaper {
+  color: var(--good-text);
+  font-weight: 600;
+}
+
+/* One vertical guide per tier, which is what makes the depth readable. */
+.craft-children {
+  margin-left: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--gridline);
+}
+
+/* Each node wraps its row and its children in a div, so the root's own row is
+   a grandchild of .craft-root, not a child. */
+.craft-root > div > .craft-row {
+  font-size: 15px;
+  font-weight: 640;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--baseline);
+  margin-bottom: 4px;
+}
+
 @media (max-width: 640px) {
   .container {
     padding: 16px;
   }
   .hero-value {
     font-size: 38px;
+  }
+  /* Narrow screens keep the chosen price and drop the alternative — two
+     tabular columns plus three tiers of indent do not fit at 375px. */
+  .craft-alt {
+    display: none;
+  }
+  .craft-children {
+    margin-left: 4px;
+    padding-left: 10px;
   }
 }

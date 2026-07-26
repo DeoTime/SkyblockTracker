@@ -246,6 +246,128 @@ export interface ItemHistoryResponse {
   flips: FlipSummary[];
 }
 
+/* -------------------------------------------------------------------- */
+/* Craft planner (/api/craft)                                            */
+/* -------------------------------------------------------------------- */
+
+/**
+ * Everything above is historical — what an ingredient cost when a flip was
+ * crafted. The craft planner is the present-tense counterpart: what one costs
+ * to make right now, off the live bazaar and the live auction book. There is
+ * therefore no PriceSource here; every number is current by construction.
+ */
+export type CraftVariant = 'clean' | 'etherwarp';
+
+/** How a node's price was obtained. `craft` means its own recipe was cheaper. */
+export type CraftVia = 'craft' | 'bazaar' | 'auction' | null;
+
+export interface CraftNode {
+  itemId: string;
+  name: string;
+  quantity: number;
+  /**
+   * Price of ONE unit. Deliberately not rounded: plenty of bazaar products
+   * trade under a coin, and rounding those to 0 makes the column nonsense.
+   */
+  unitPrice: number | null;
+  /** unitPrice × quantity, in whole coins. */
+  totalPrice: number | null;
+  via: CraftVia;
+  /** Present on nodes that were expanded; absent on bazaar leaves. */
+  craftCost?: number | null;
+  /**
+   * What one costs to buy outright — bazaar, or lowest clean BIN. This is what
+   * the cost becomes when the tier is closed, so it is also what decides
+   * whether a tier CAN be closed: null means the item cannot be bought.
+   */
+  marketPrice?: number | null;
+  /**
+   * Units the recipe yields per craft. Ingredient totals are for one batch, so
+   * per-unit craft cost is their sum divided by this.
+   */
+  outputCount?: number;
+  children: CraftNode[];
+}
+
+/** A live BIN listing. */
+export interface CraftListing {
+  auctionId: string;
+  price: number;
+  /** When the listing expires. ISO, or null when the book omitted it. */
+  endsAt: string | null;
+  clean: boolean;
+}
+
+/**
+ * One purchase in the build. An Etherwarp Aspect of the Void is three of them
+ * — the sword, the Conduit, and the Merger — not one recipe.
+ */
+export interface CraftComponent {
+  key: string;
+  itemId: string;
+  name: string;
+  quantity: number;
+  /** A gate the recipe needs, e.g. "Enderman Slayer 7". Null when unrestricted. */
+  requires: string | null;
+  /** Null when the item has no recipe, or one that could not be fully priced. */
+  craftCost: number | null;
+  /** Lowest live BIN. Null when nothing is listed. */
+  marketPrice: number | null;
+  marketListings: number;
+  /** Which of the two is cheaper, and therefore what `cost` is. */
+  chosen: 'craft' | 'buy' | null;
+  cost: number | null;
+  /**
+   * The listings behind `marketPrice`, cheapest first, with the one being
+   * costed removed. Shows the depth of the market rather than just its floor:
+   * a lowest BIN sitting far under the next ten is a listing about to be
+   * sniped, not a price you can rely on buying at.
+   */
+  nextCheapest: CraftListing[];
+  /** Ingredient ids that could not be priced at all. */
+  unpriced: string[];
+  tree: CraftNode;
+}
+
+export interface CraftPlan {
+  itemId: string;
+  itemName: string;
+  rarity: Rarity;
+  variant: CraftVariant;
+  variantLabel: string;
+  description: string;
+  generatedAt: string;
+  components: CraftComponent[];
+  /**
+   * Cheapest total to obtain the finished item. Null when any component is
+   * unpriceable — a partial sum understates cost, and every trap in this
+   * project points that way.
+   */
+  total: number | null;
+  /** Total if every component were crafted. Null when one has no recipe. */
+  craftOnly: number | null;
+  unpriced: string[];
+  market: {
+    /** Lowest BIN of the SAME thing this plan builds. Null when none listed. */
+    lowestBin: number | null;
+    comparableListings: number;
+    /** The bare item, as context for the base component's buy option. */
+    cleanLowestBin: number | null;
+    cleanListings: number;
+    listings: number;
+    /** lowestBin − total. Positive means crafting is cheaper. */
+    savingsVsBuying: number | null;
+  };
+  freshness: {
+    bazaarAt: string;
+    bazaarAgeSeconds: number;
+    auctionAt: string;
+    auctionAgeSeconds: number;
+    auctionsScanned: number;
+    auctionPages: number;
+  };
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
