@@ -338,7 +338,7 @@ export const variantKeys = Object.keys(VARIANTS);
  * means a recipe reaching an auction-only ingredient we did not anticipate
  * still comes out priced instead of null.
  */
-export async function craftPlan({ itemId = 'ASPECT_OF_THE_VOID', variant = 'etherwarp' } = {}) {
+async function computePlan({ itemId = 'ASPECT_OF_THE_VOID', variant = 'etherwarp' } = {}) {
   const spec = VARIANTS[variant];
   if (!spec) {
     throw new Error(`Unknown variant "${variant}". Try one of: ${variantKeys.join(', ')}.`);
@@ -465,12 +465,107 @@ export async function craftPlan({ itemId = 'ASPECT_OF_THE_VOID', variant = 'ethe
       savingsVsBuying: total !== null && marketRef !== null ? whole(marketRef) - total : null,
     },
     freshness: {
+      // Absolute instants only. The *AgeSeconds fields are derived at serve
+      // time by withAges(), because a cached plan that still claims "bazaar
+      // read 2s ago" ten minutes later is the page lying about being live.
       bazaarAt: new Date(bazaarAt).toISOString(),
-      bazaarAgeSeconds: Math.round((Date.now() - bazaarAt) / 1000),
       auctionAt: new Date(ahBook.at).toISOString(),
-      auctionAgeSeconds: Math.round((Date.now() - ahBook.at) / 1000),
       auctionsScanned: ahBook.scanned,
       auctionPages: ahBook.totalPages,
     },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Cache                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A cold plan costs ~8s, almost all of it the 51-page auction sweep. The book
+ * itself is already cached for 60s inside auctionBook(), which means a visitor
+ * arriving more than a minute after the last one pays the full 8s — and on a
+ * page nobody hammers, that is very nearly every visitor.
+ *
+ * So cache the finished plan and serve it stale while refreshing behind the
+ * request. The 8s then lands on a background task instead of a person.
+ */
+const PLAN_FRESH_MS = 60_000; // serve untouched; matches the book's own TTL
+const PLAN_STALE_MS = 10 * 60_000; // serve immediately, refresh behind it
+
+/**
+ * The key comes from ?item=, so it is caller-controlled. Bounded and evicted
+ * oldest-first so a loop over made-up item ids cannot grow this without limit.
+ * Well past the handful of real builds anyone asks for.
+ */
+const MAX_PLANS = 32;
+
+const planCache = new Map(); // key -> { at, value }; insertion-ordered
+const planInflight = new Map(); // key -> Promise
+
+/**
+ * Derive the age fields from the stored absolute instants.
+ *
+ * These cannot be baked into the cached object: it is handed to several
+ * requests over several minutes, and each one needs the age as of *its* moment.
+ */
+function withAges(plan) {
+  const now = Date.now();
+  const age = (iso) => Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
+  return {
+    ...plan,
+    freshness: {
+      ...plan.freshness,
+      bazaarAgeSeconds: age(plan.freshness.bazaarAt),
+      auctionAgeSeconds: age(plan.freshness.auctionAt),
+    },
+  };
+}
+
+/** Compute once per key even if several requests arrive together. */
+function computeShared(key, opts) {
+  const pending = planInflight.get(key);
+  if (pending) return pending;
+
+  const p = computePlan(opts)
+    .then((value) => {
+      // Re-insert at the tail so a key that is still being used is not the one
+      // evicted; Map iterates in insertion order.
+      planCache.delete(key);
+      planCache.set(key, { at: Date.now(), value });
+      while (planCache.size > MAX_PLANS) {
+        planCache.delete(planCache.keys().next().value);
+      }
+      return value;
+    })
+    .finally(() => planInflight.delete(key));
+
+  planInflight.set(key, p);
+  return p;
+}
+
+/**
+ * Cost one finished item at current prices, cached.
+ *
+ * Fresh -> serve. Stale -> serve the old copy now and refresh behind it.
+ * Older than PLAN_STALE_MS (or nothing cached) -> compute and wait, because
+ * past that point the prices are too old to present as current.
+ */
+export async function craftPlan({ itemId = 'ASPECT_OF_THE_VOID', variant = 'etherwarp' } = {}) {
+  const key = `${itemId}:${variant}`;
+  const hit = planCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+
+  if (hit && age < PLAN_FRESH_MS) return withAges(hit.value);
+
+  if (hit && age < PLAN_STALE_MS) {
+    // Fire and forget. A failed refresh must not reject this request or take
+    // the process down as an unhandled rejection — the stale copy is still a
+    // usable answer, and the next caller will try again.
+    computeShared(key, { itemId, variant }).catch((err) =>
+      console.error(`craft: background refresh of ${key} failed: ${err.message}`),
+    );
+    return withAges(hit.value);
+  }
+
+  return withAges(await computeShared(key, { itemId, variant }));
 }
