@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import { buildFlip, buildPending, summarizePending, summarize, profitSeries, byItem, rangeStart } from './flips.js';
 import { itemMetadata } from './prices.js';
 import { craftPlan, variantKeys } from './craft.js';
+import { cachedSalesVolume } from './sales.js';
 import { sweep, playerAuctions } from './sweep.js';
 import {
   loadSaleNotifyConfig,
@@ -631,6 +632,17 @@ const server = http.createServer(async (req, res) => {
       return send(200, await craftPlan({
         itemId: url.searchParams.get('item') ?? 'ASPECT_OF_THE_VOID',
         variant,
+      }));
+    }
+
+    if (p === '/sales') {
+      // Hourly sales volume by upgrade set, off Coflnet. No DB read.
+      // Clamped to the free tier's 7-day wall — asking for more would silently
+      // return a short window and read as "volume collapsed".
+      const days = Math.min(7, Math.max(1, Number(url.searchParams.get('days') ?? 7) || 7));
+      return send(200, await cachedSalesVolume({
+        itemId: url.searchParams.get('item') ?? 'ASPECT_OF_THE_VOID',
+        days,
       }));
     }
 

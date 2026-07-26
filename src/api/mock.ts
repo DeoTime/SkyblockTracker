@@ -25,6 +25,7 @@ import type {
   ProfitPoint,
   Rarity,
   RangeKey,
+  SalesResponse,
   Upgrade,
 } from './types';
 import { ApiError } from './types';
@@ -680,5 +681,98 @@ export function mockCraftPlan(itemId: string, variant: CraftVariant): CraftPlan 
       auctionsScanned: 50_434,
       auctionPages: 51,
     },
+  };
+}
+
+/* -------------------------------------------------------------------- */
+/* Sales volume by upgrade set                                           */
+/* -------------------------------------------------------------------- */
+
+/**
+ * Mirrors the real shape and the real ratio: the bare etherwarped sword is the
+ * bulk of the volume and the fully built one is a thin fraction of it (measured
+ * 112 against 836). A mock with two comparable series would make the built
+ * cohort look like a liquid market it is not.
+ */
+export function mockSalesVolume(itemId: string, days: number): SalesResponse {
+  const rand = rng(hash(`sales-${itemId}`));
+  const hours = days * 24;
+  const HOUR = DAY / 24;
+  const current = Math.floor(NOW / HOUR) * HOUR;
+  const stamps = Array.from(
+    { length: hours },
+    (_, i) => `${new Date(current - (hours - 1 - i) * HOUR).toISOString().slice(0, 13)}:00:00Z`,
+  );
+
+  // Diurnal: the server is busiest around 18:00 UTC and near-dead at 07:00, so
+  // a flat random series would hide the shape the hourly view exists to show.
+  const etherwarp = stamps.map((hour, i) => {
+    const h = Number(hour.slice(11, 13));
+    const wave = 0.35 + 0.65 * Math.max(0, Math.sin(((h - 3) / 24) * Math.PI * 2) * 0.5 + 0.5);
+    const sales = Math.round((2 + rand() * 5) * wave * (i === hours - 1 ? 0.4 : 1));
+    return {
+      hour,
+      sales,
+      medianPrice: sales ? 25_000_000 + Math.round(rand() * 3_000_000) : null,
+      partial: i === hours - 1,
+    };
+  });
+
+  const built = stamps.map((hour, i) => {
+    const sales = rand() < 0.55 ? 0 : 1 + Math.round(rand() * (i === hours - 1 ? 0 : 1));
+    return {
+      hour,
+      sales,
+      medianPrice: sales ? 29_500_000 + Math.round(rand() * 2_000_000) : null,
+      partial: i === hours - 1,
+    };
+  });
+
+  return {
+    itemId,
+    itemName: 'Aspect of the Void',
+    days,
+    hours,
+    generatedAt: new Date(NOW).toISOString(),
+    cohorts: [
+      {
+        key: 'ethermerge',
+        label: 'Etherwarp only',
+        match: 'exact' as const,
+        upgrades: ['ethermerge'],
+        enchants: [],
+        sales: etherwarp.reduce((n, p) => n + p.sales, 0),
+        medianPrice: 26_600_000,
+        points: etherwarp,
+      },
+      {
+        key: 'ethermerge_built',
+        label: 'Etherwarp + tuner + gems + Wise V',
+        match: 'contains' as const,
+        upgrades: ['ethermerge', 'tuned_transmission', 'gems'],
+        enchants: [{ type: 'ultimate_wise', level: 5 }],
+        sales: built.reduce((n, p) => n + p.sales, 0),
+        medianPrice: 29_999_000,
+        points: built,
+      },
+    ],
+    coverage: {
+      salesScanned: 3121,
+      pagesFetched: 4,
+      truncated: false,
+      from: new Date(NOW - days * DAY).toISOString(),
+      to: new Date(NOW).toISOString(),
+    },
+    topShapes: [
+      { upgrades: '(clean)', sales: 1059 },
+      { upgrades: 'ethermerge', sales: 754 },
+      { upgrades: 'enchantments', sales: 201 },
+      { upgrades: 'enchantments+tuned_transmission', sales: 166 },
+      { upgrades: 'enchantments+ethermerge+gems+tuned_transmission', sales: 139 },
+      { upgrades: 'ethermerge+tuned_transmission', sales: 117 },
+    ],
+    unclassifiedKeys: [],
+    attribution: 'Sales data from Coflnet — sky.coflnet.com',
+    cachedAgeSeconds: 0,
   };
 }

@@ -6,6 +6,7 @@ import { AllFlips } from './pages/AllFlips';
 import { FlipDetail } from './pages/FlipDetail';
 import { ItemExplorer } from './pages/ItemExplorer';
 import { Craft } from './pages/Craft';
+import { Sales } from './pages/Sales';
 import { Settings } from './pages/Settings';
 
 export function App() {
@@ -18,6 +19,7 @@ export function App() {
         <Route path="/flip/:auctionUuid" element={<FlipDetail />} />
         <Route path="/item/:itemId" element={<ItemExplorer />} />
         <Route path="/craft" element={<Craft />} />
+        <Route path="/sales" element={<Sales />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -42,6 +42,9 @@ export function Layout({ children }: { children: ReactNode }) {
         <NavLink to="/craft" className="btn-ghost">
           Craft cost
         </NavLink>
+        <NavLink to="/sales" className="btn-ghost">
+          Sales
+        </NavLink>
         <NavLink to="/settings" className="btn-ghost">
           API key
         </NavLink>

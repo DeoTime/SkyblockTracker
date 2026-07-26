@@ -592,6 +592,15 @@ span.craft-toggle {
   .hero-value {
     font-size: 38px;
   }
+  /* Brand + nav links + theme toggle stopped fitting on one line once there
+     was more than one page to link to. Wrap instead of overflowing the page,
+     and tighten the gutters that cost the most at this width. */
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    gap: 10px;
+    padding: 12px 16px;
+  }
   /* Narrow screens keep the chosen price and drop the alternative — two
      tabular columns plus three tiers of indent do not fit at 375px. */
   .craft-alt {

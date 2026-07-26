@@ -8,6 +8,7 @@ import type {
   ItemHistoryResponse,
   PendingResponse,
   RangeKey,
+  SalesResponse,
 } from './types';
 import {
   mockCraftPlan,
@@ -16,6 +17,7 @@ import {
   mockFlips,
   mockItemHistory,
   mockPending,
+  mockSalesVolume,
   setMockExclusion,
 } from './mock';
 
@@ -90,6 +92,18 @@ export function fetchCraftPlan(itemId: string, variant: CraftVariant): Promise<C
   return get(
     `/craft?item=${encodeURIComponent(itemId)}&variant=${encodeURIComponent(variant)}`,
     () => mockCraftPlan(itemId, variant),
+  );
+}
+
+/**
+ * Hourly sales volume split by exact upgrade set, sourced from Coflnet's sold
+ * feed (their 7-day free-tier window). Several sequential upstream pages, so
+ * the server caches it — a cold call takes a few seconds.
+ */
+export function fetchSalesVolume(itemId: string, days: number): Promise<SalesResponse> {
+  return get(
+    `/sales?item=${encodeURIComponent(itemId)}&days=${days}`,
+    () => mockSalesVolume(itemId, days),
   );
 }
 

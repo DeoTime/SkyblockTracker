@@ -368,6 +368,69 @@ export interface CraftPlan {
   };
 }
 
+/* -------------------------------------------------------------------- */
+/* Sales volume by upgrade set (/api/sales)                              */
+/* -------------------------------------------------------------------- */
+
+export interface SalesPoint {
+  /** Start of the UTC hour, ISO. Every hour in the window appears, empty ones included. */
+  hour: string;
+  sales: number;
+  /** Median sale price that hour, or null when nothing sold. */
+  medianPrice: number | null;
+  /** The hour still in progress — its count is a fraction of a full bar. */
+  partial: boolean;
+}
+
+/**
+ * Sales matching an upgrade set, either exactly or as a floor.
+ *
+ * 'exact' means those upgrades and nothing else — the bare-sword baseline.
+ * 'contains' means at least those, extras allowed, which is the only way a
+ * built sword produces a usable series: an exact match on a built configuration
+ * describes a product almost nobody actually sells.
+ */
+export interface SalesCohort {
+  key: string;
+  label: string;
+  match: 'exact' | 'contains';
+  /** Upgrade keys a sale must carry — exclusively under 'exact', at minimum under 'contains'. */
+  upgrades: string[];
+  /** Enchantments required at this level or higher. Always a floor, never equality. */
+  enchants: { type: string; level: number }[];
+  sales: number;
+  medianPrice: number | null;
+  points: SalesPoint[];
+}
+
+export interface SalesResponse {
+  itemId: string;
+  itemName: string;
+  days: number;
+  /** Buckets in the series — days × 24, the last one still filling. */
+  hours: number;
+  generatedAt: string;
+  cohorts: SalesCohort[];
+  coverage: {
+    salesScanned: number;
+    pagesFetched: number;
+    /** Hit the page cap before reaching the window start — series is partial. */
+    truncated: boolean;
+    from: string | null;
+    to: string | null;
+  };
+  /**
+   * The most common upgrade sets in the window. Exists so a cohort reading zero
+   * can be explained by what people actually bought, instead of looking broken.
+   */
+  topShapes: { upgrades: string; sales: number }[];
+  /** Non-empty means a possibly cost-bearing NBT key nobody has classified. */
+  unclassifiedKeys: string[];
+  /** Coflnet requires this be shown in the UI. Do not drop it. */
+  attribution: string;
+  cachedAgeSeconds: number;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
