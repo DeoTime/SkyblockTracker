@@ -1,5 +1,5 @@
 import { readExtraAttributes, readTimestamp, detectUpgrades } from './items.js';
-import { PriceBook, costOf, itemMetadata } from './prices.js';
+import { PriceBook, costOf, itemMetadata, reforgeTables } from './prices.js';
 
 /**
  * Turn a tracked_sales row into the FlipSummary / FlipDetail the frontend
@@ -74,7 +74,8 @@ const iso = (ms) => new Date(ms).toISOString();
  * @param opts.detail  include ingredients/upgrades/metadata/fees
  */
 export async function buildFlip(row, db, { detail = false } = {}) {
-  const meta = (await itemMetadata()).get(row.item_id);
+  const [names, reforges] = await Promise.all([itemMetadata(), reforgeTables()]);
+  const meta = names.get(row.item_id);
 
   let ea = null;
   if (row.item_bytes) {
@@ -91,7 +92,7 @@ export async function buildFlip(row, db, { detail = false } = {}) {
   const ageEstimated = craftedRaw === null && row.crafted_at === null;
 
   const book = new PriceBook(db, craftedAt);
-  const upgrades = ea ? detectUpgrades(ea, meta) : [];
+  const upgrades = ea ? detectUpgrades(ea, meta, reforges) : [];
 
   /* ---- base item: craft cost first ---------------------------------- */
   const base = await costOf(row.item_id, book);
@@ -106,10 +107,13 @@ export async function buildFlip(row, db, { detail = false } = {}) {
   const upgradeLines = [];
 
   for (const u of upgrades) {
-    let unit = null;
+    // A fixed price is known without a lookup — an anvil reforge consumes no
+    // item, so its zero is measured, not missing, and must not land in
+    // unpricedUpgrades.
+    let unit = u.fixedPrice ?? null;
     let source = null;
 
-    if (u.productId) {
+    if (unit === null && u.productId) {
       const bz = book.bazaar(u.productId);
       if (bz !== null) {
         unit = bz;
@@ -172,7 +176,6 @@ export async function buildFlip(row, db, { detail = false } = {}) {
   /* ---- detail-only fields -------------------------------------------- */
   const now = new PriceBook(db, Date.now());
   const current = await costOf(row.item_id, now);
-  const names = await itemMetadata();
 
   return {
     ...summary,

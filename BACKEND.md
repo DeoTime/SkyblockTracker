@@ -440,7 +440,7 @@ recalled; the frontend implements the same extraction in
 | Field | Shape | Price against |
 |---|---|---|
 | `enchantments` | `{ sharpness: 6, ultimate_wisdom: 5 }` | `ENCHANTMENT_{NAME}_{LEVEL}` on bazaar (763 such products) |
-| `modifier` | `"fabled"` | reforge-stone lookup table — **you must build this** |
+| `modifier` | `"fabled"` | which of NEU's two reforge tables it is in (below) |
 | `hot_potato_count` | `10` | first 10 → `HOT_POTATO_BOOK`, remainder → `FUMING_POTATO_BOOK` |
 | `rarity_upgrades` | `1` | `RECOMBOBULATOR_3000` |
 | `upgrade_level` / `dungeon_item_level` | `3` | `upgrade_costs` from metadata → `ESSENCE_{TYPE}` |
@@ -453,6 +453,23 @@ recalled; the frontend implements the same extraction in
 
 Read `upgrade_level ?? dungeon_item_level` — both appear in live data and mean the
 same thing.
+
+**`modifier` is two different upgrades wearing one field.** A Reforge Anvil reroll
+is random and consumes no item — a coin fee and nothing else — so it is cost
+basis **zero**. A reforge stone is a consumed auction item worth up to tens of
+millions. Nothing in the NBT says which one you are looking at; the name does.
+NEU keeps the anvil reforges in `constants/reforges.json` (50) and the stones in
+`constants/reforgestones.json` (82, with the stone's item id), and the two do not
+overlap — [`prices.js › reforgeTables`](./api/src/prices.js). Match on the name
+stripped to letters and digits with the trailing `s` dropped, because NBT stores
+`"jerry"` for `Jerry's`.
+
+A modifier in neither table — a new stone NEU has not indexed, or a failed fetch —
+stays **unpriced**. Defaulting the unknown case to free is the §0 error again: it
+would silently zero the expensive half.
+
+Stone pricing itself is still M4. The table gives you the item id, so the lines
+carry the stone's name and stay unpriced rather than guessing.
 
 **Fields that are NOT costs** — do not price them: `baseStatBoostPercentage` and
 `item_tier` (dungeon roll quality), `dungeon_skill_req`, `bossId`, `spawnedFor`,

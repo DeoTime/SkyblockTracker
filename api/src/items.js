@@ -62,10 +62,31 @@ const pretty = (s) =>
 export const AUCTION_ONLY = ['ETHERWARP_CONDUIT', 'ETHERWARP_MERGER'];
 
 /**
+ * Modifier as stored in NBT ("blood_soaked") to NEU's display name
+ * ("Blood-Soaked"), reduced to the letters both agree on.
+ *
+ * The trailing `s` goes too, because the possessive reforges are the one place
+ * the two disagree on more than punctuation — NBT stores "jerry" for "Jerry's".
+ * Dropping it merges nothing: no two reforge names collide once stripped.
+ */
+export const reforgeKey = (s) =>
+  String(s)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/s$/, '');
+
+/**
  * Every purchased upgrade on an item. Returns [{kind,label,quantity,productId}].
  * productId null means nothing sells it directly (reforge stones, runes).
+ *
+ * `fixedPrice` is the other way a line gets a number: a cost we know without a
+ * lookup, so callers must not read it as an unpriced gap. Only anvil reforges
+ * use it, and only ever at zero.
+ *
+ * `reforges` is prices.js › reforgeTables(); without it no reforge can be told
+ * apart from another and all of them stay unpriced.
  */
-export function detectUpgrades(ea, meta) {
+export function detectUpgrades(ea, meta, reforges) {
   const out = [];
   const num = (v) => (typeof v === 'number' ? v : typeof v === 'bigint' ? Number(v) : null);
 
@@ -83,13 +104,30 @@ export function detectUpgrades(ea, meta) {
     }
   }
 
-  if (typeof ea.modifier === 'string') {
+  // Two kinds of reforge, and only one of them costs an item. The Reforge Anvil
+  // rerolls at random for a coin fee and consumes nothing, so those are free —
+  // a real zero, not a missing price. Reforge stones are consumed and still
+  // need the lookup table (BACKEND.md M4).
+  //
+  // "none" is a stored value, not an absence: an item rerolled back to no
+  // reforge. Emitting it would put a phantom upgrade on the item and drop it
+  // out of the clean price bucket via isCleanBase.
+  const modifier = typeof ea.modifier === 'string' ? ea.modifier.trim() : '';
+  const modKey = reforgeKey(modifier);
+  if (modKey && modKey !== 'none') {
+    const stone = reforges?.stones.get(modKey) ?? null;
+    const anvil = reforges?.basic.has(modKey) ?? false;
     out.push({
       kind: 'reforge',
-      label: `${pretty(ea.modifier)} reforge`,
+      label: `${pretty(modifier)} reforge`,
       quantity: 1,
       productId: null,
-      note: 'Reforge stone lookup not implemented; basic reforges cost only the anvil fee.',
+      fixedPrice: anvil ? 0 : null,
+      note: anvil
+        ? 'Reforge Anvil reroll — a coin fee, no item consumed.'
+        : stone
+          ? `Reforge stone (${pretty(stone)}); stone pricing not implemented.`
+          : 'Not a known anvil reroll — left unpriced rather than assumed free.',
     });
   }
 

@@ -1,3 +1,5 @@
+import { reforgeKey } from './items.js';
+
 /**
  * Historical pricing.
  *
@@ -142,8 +144,8 @@ export class PriceBook {
 /* NEU recipes                                                         */
 /* ------------------------------------------------------------------ */
 
-const REPO =
-  'https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master/items';
+const NEU = 'https://raw.githubusercontent.com/NotEnoughUpdates/NotEnoughUpdates-REPO/master';
+const REPO = `${NEU}/items`;
 
 const neuCache = new Map();
 const neuInflight = new Map();
@@ -274,6 +276,55 @@ export async function costOf(itemId, book, depth = 0, seen = new Set()) {
     marketPrice: market,
     parts,
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Reforges                                                            */
+/* ------------------------------------------------------------------ */
+
+let reforgeCache = null;
+let reforgeFetchedAt = 0;
+
+/**
+ * The two reforge tables, keyed by normalised modifier:
+ *
+ *   basic   Reforge Anvil rerolls. A coin fee, no item — cost basis zero.
+ *   stones  reforge-stone reforges → the stone's item id. The stone is consumed.
+ *
+ * NEU keeps them in separate files and they do not overlap, which is the only
+ * thing that separates a free reroll from a Dragon Claw. So a modifier in
+ * NEITHER table stays unpriced rather than being assumed free, and a failed
+ * fetch returns null (or the stale table) — never an empty set, which would
+ * quietly zero every reforge on the server.
+ */
+export async function reforgeTables() {
+  if (reforgeCache && Date.now() - reforgeFetchedAt < META_TTL) return reforgeCache;
+
+  try {
+    const [anvil, stones] = await Promise.all(
+      ['reforges', 'reforgestones'].map(async (file) => {
+        const r = await fetch(`${NEU}/constants/${file}.json`);
+        if (!r.ok) throw new Error(`${file}.json: ${r.status}`);
+        return r.json();
+      }),
+    );
+
+    const basic = new Set();
+    for (const v of Object.values(anvil)) if (v?.reforgeName) basic.add(reforgeKey(v.reforgeName));
+
+    const byStone = new Map();
+    for (const [key, v] of Object.entries(stones)) {
+      if (v?.reforgeName) byStone.set(reforgeKey(v.reforgeName), v.internalName ?? key);
+    }
+
+    if (basic.size === 0 || byStone.size === 0) throw new Error('empty reforge table');
+    reforgeCache = { basic, stones: byStone };
+    reforgeFetchedAt = Date.now();
+  } catch {
+    // Keep whatever we had; if we never had one, callers get null and price
+    // nothing.
+  }
+  return reforgeCache;
 }
 
 /* ------------------------------------------------------------------ */
