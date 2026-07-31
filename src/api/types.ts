@@ -261,6 +261,17 @@ export type CraftVariant = 'clean' | 'etherwarp';
 /** How a node's price was obtained. `craft` means its own recipe was cheaper. */
 export type CraftVia = 'craft' | 'bazaar' | 'auction' | null;
 
+/**
+ * The two ways to buy one unit off the bazaar. `instant` takes the standing
+ * sell offers now; `order` joins the buy orders at the lower price and waits to
+ * fill. Both are shipped so the tree can be re-priced per row without a
+ * round trip; everything the API costs itself uses `instant`.
+ */
+export interface BazaarPrices {
+  instant: number;
+  order: number;
+}
+
 export interface CraftNode {
   itemId: string;
   name: string;
@@ -281,6 +292,12 @@ export interface CraftNode {
    * whether a tier CAN be closed: null means the item cannot be bought.
    */
   marketPrice?: number | null;
+  /**
+   * Present only when this node's buy price is a BAZAAR price — i.e. switching
+   * it to a buy order re-prices the same purchase. Null on auction-priced tiers,
+   * which have no order side, and absent from an API older than this build.
+   */
+  bazaar?: BazaarPrices | null;
   /**
    * Units the recipe yields per craft. Ingredient totals are for one batch, so
    * per-unit craft cost is their sum divided by this.

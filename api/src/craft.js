@@ -171,24 +171,62 @@ class LivePriceBook {
     this.auction = this.auction.bind(this);
   }
 
-  bazaar(itemId) {
-    // NEU writes damage variants with a hyphen (INK_SACK-4); the bazaar uses a
-    // colon (INK_SACK:4). Left unnormalised the lookup silently misses and the
-    // ingredient reads as "not a bazaar item" (MARKET.md §4.3a).
-    const id = itemId.replace(/-(\d+)$/, ':$1');
+  /**
+   * The bazaar row for an id.
+   *
+   * NEU writes damage variants with a hyphen (INK_SACK-4); the bazaar uses a
+   * colon (INK_SACK:4). Left unnormalised the lookup silently misses and the
+   * ingredient reads as "not a bazaar item" (MARKET.md §4.3a).
+   */
+  row(itemId) {
+    return this.prices.get(itemId.replace(/-(\d+)$/, ':$1')) ?? null;
+  }
 
+  bazaar(itemId) {
     // Forge recipes carry a literal coin cost as a pseudo-ingredient. It is not
     // a bazaar product, and without this it makes every recipe containing one
     // unpriceable (MARKET.md §4.3c).
-    if (id === 'SKYBLOCK_COIN') return 1;
+    if (itemId === 'SKYBLOCK_COIN') return 1;
 
-    const row = this.prices.get(id);
+    const row = this.row(itemId);
     if (!row) return null;
 
     // buy 0 with a non-zero sell is a real state — nobody is selling into buy
     // orders — and sell_price is much closer to what a purchase costs than 0.
     this.sources.set(itemId, 'live_bazaar');
     return row.buy > 0 ? row.buy : row.sell;
+  }
+
+  /**
+   * The two ways to obtain one unit off the bazaar, or null if it does not
+   * trade there:
+   *
+   *   instant  buyPrice  — take the sell offers now, at the higher price
+   *   order    sellPrice — join the buy orders at the lower one, and wait
+   *
+   * Hypixel names both fields from the other side of the trade: `sellPrice` is
+   * what the top buy orders are paying, which is what an order of your own has
+   * to match to fill. So it is the cheaper route by construction, and the
+   * spread between the two is the whole reason the page offers the choice.
+   *
+   * Reported alongside the costed price rather than instead of it — the plan
+   * itself stays on instant-buy (MARKET.md §4.1), and the client re-prices
+   * whichever rows the caller switches over.
+   */
+  bazaarPair(itemId) {
+    if (itemId === 'SKYBLOCK_COIN') return null;
+
+    const row = this.row(itemId);
+    if (!row) return null;
+
+    const instant = row.buy > 0 ? row.buy : row.sell;
+    if (!(instant > 0)) return null; // both sides empty — no route to price
+
+    // sell 0 means there are no buy orders to join, so there is no cheaper
+    // route — not a free one. Falling back to instant keeps a switched row from
+    // reading as "this ingredient costs nothing", which is the direction every
+    // trap in this project points.
+    return { instant, order: row.sell > 0 ? row.sell : instant };
   }
 
   /**
@@ -248,6 +286,7 @@ async function tree(itemId, quantity, book, meta, depth = 0) {
       unitPrice: bz,
       totalPrice: whole(bz * quantity),
       via: 'bazaar',
+      bazaar: book.bazaarPair(itemId),
       children: [],
     };
   }
@@ -273,6 +312,10 @@ async function tree(itemId, quantity, book, meta, depth = 0) {
     via: c.source, // 'craft' | 'bazaar' | 'auction' | null
     craftCost: whole(c.craftCost),
     marketPrice: whole(c.marketPrice),
+    // Non-null only when this node's market price IS a bazaar price, so a row
+    // switched to a buy order re-prices the same purchase rather than a
+    // different one. Auction-priced tiers have no order side and get null.
+    bazaar: book.bazaarPair(itemId),
     outputCount: recipe?.outputCount ?? 1,
     children,
   };

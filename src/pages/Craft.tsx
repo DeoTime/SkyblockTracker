@@ -19,6 +19,13 @@ import { duration, exactCoins, unitPrice } from '../lib/format';
  * which layers are worth crafting and which are cheaper to just buy — rather
  * than a static breakdown. Each item decides independently.
  *
+ * The same is true one level down, for anything bought off the bazaar: an
+ * INSTANT row is taken from the sell offers at the higher price, an ORDER row
+ * joins the buy orders at the lower one and waits to fill. That is the other
+ * real decision this build involves, so it gets the same treatment — per row,
+ * re-priced on the spot, with a header control for the common case of picking
+ * one strategy for everything.
+ *
  * Prices are live: the bazaar as of a minute ago, and a full sweep of the
  * auction book for what the bazaar does not carry.
  */
@@ -158,27 +165,45 @@ function rootNode(plan: CraftPlan): CraftNode {
 }
 
 /**
- * Cost of a node under the current open/closed choices.
+ * What one unit of a bought row costs, under its bazaar choice.
+ *
+ * `orders` holds the paths priced as buy orders; everything else takes the
+ * instant price, which is what the API costed and therefore what `unitPrice`
+ * and `marketPrice` already carry. Rows with no `bazaar` block — auction
+ * purchases, and anything from an API older than this build — have only the one
+ * price and ignore the set entirely.
+ */
+function unitOf(node: CraftNode, path: string, orders: Set<string>): number | null {
+  const fallback = node.children.length === 0 ? node.unitPrice : (node.marketPrice ?? null);
+  if (!node.bazaar) return fallback;
+  return orders.has(path) ? node.bazaar.order : node.bazaar.instant;
+}
+
+/**
+ * Cost of a node under the current open/closed and instant/order choices.
  *
  * Closed (or recipe-less) means bought. Open means crafted, which is the sum of
- * the children under THEIR choices — so closing something three tiers down
- * propagates all the way to the headline figure. Null anywhere makes the whole
- * branch null: a partial sum understates cost, which is the direction every
- * trap in this project points.
+ * the children under THEIR choices — so closing something three tiers down, or
+ * moving it to a buy order, propagates all the way to the headline figure. Null
+ * anywhere makes the whole branch null: a partial sum understates cost, which
+ * is the direction every trap in this project points.
  */
-function costOf(node: CraftNode, path: string, closed: Set<string>): number | null {
-  // No recipe: it can only ever be bought, and totalPrice already carries the
-  // quantity the parent needs.
-  if (node.children.length === 0) return node.totalPrice;
+function costOf(node: CraftNode, path: string, closed: Set<string>, orders: Set<string>): number | null {
+  // No recipe: it can only ever be bought, and the unit price carries whichever
+  // side of the bazaar this row is on.
+  if (node.children.length === 0) {
+    const unit = unitOf(node, path, orders);
+    return unit === null ? null : Math.round(unit * node.quantity);
+  }
 
   if (closed.has(path)) {
-    const unit = node.marketPrice ?? null;
-    return unit === null ? null : unit * node.quantity;
+    const unit = unitOf(node, path, orders);
+    return unit === null ? null : Math.round(unit * node.quantity);
   }
 
   let sum = 0;
   for (let i = 0; i < node.children.length; i++) {
-    const c = costOf(node.children[i], `${path}.${i}`, closed);
+    const c = costOf(node.children[i], `${path}.${i}`, closed, orders);
     if (c === null) return null;
     sum += c;
   }
@@ -187,11 +212,29 @@ function costOf(node: CraftNode, path: string, closed: Set<string>): number | nu
 }
 
 /** The same set with one path flipped — used to price the road not taken. */
-function flipped(closed: Set<string>, path: string): Set<string> {
-  const next = new Set(closed);
+function flipped(paths: Set<string>, path: string): Set<string> {
+  const next = new Set(paths);
   if (next.has(path)) next.delete(path);
   else next.add(path);
   return next;
+}
+
+/**
+ * Whether this row can be bought either way. An item with no buy orders to join
+ * reports the same price twice (the API refuses to call an empty order book
+ * free), and offering a switch that changes nothing is worse than not offering
+ * one.
+ */
+const orderable = (node: CraftNode) => !!node.bazaar && node.bazaar.order !== node.bazaar.instant;
+
+/** Stable identity for "nothing on order", so it is not a new Set per render. */
+const EMPTY: Set<string> = new Set();
+
+/** Every path in the tree with a real instant/order choice. */
+function bazaarPathsIn(node: CraftNode, path: string, out: string[] = []): string[] {
+  if (orderable(node)) out.push(path);
+  node.children.forEach((c, i) => bazaarPathsIn(c, `${path}.${i}`, out));
+  return out;
 }
 
 function CraftTree({ plan }: { plan: CraftPlan }) {
@@ -203,18 +246,52 @@ function CraftTree({ plan }: { plan: CraftPlan }) {
    */
   const [closed, setClosed] = useState<Set<string>>(new Set());
 
-  const toggle = (path: string) =>
-    setClosed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
+  /**
+   * Paths bought with a buy order rather than instantly. Empty means the whole
+   * build is priced at instant-buy, which is what the API costed and the
+   * conservative default — an order is a price you might wait a day to get.
+   */
+  const [orders, setOrders] = useState<Set<string>>(new Set());
+
+  const toggle = (path: string) => setClosed((prev) => flipped(prev, path));
+  const toggleOrder = (path: string) => setOrders((prev) => flipped(prev, path));
+
+  const bazaarPaths = useMemo(() => bazaarPathsIn(root, 'r'), [root]);
+  const allInstant = orders.size === 0;
+  const allOrder = bazaarPaths.length > 0 && bazaarPaths.every((p) => orders.has(p));
+
+  /**
+   * What switching the whole build to buy orders is worth, under the open/closed
+   * choices currently made. Priced by costing it both ways rather than summing
+   * spreads, so a tier that is bought outright — and whose bazaar ingredients
+   * therefore are not being paid for at all — contributes nothing.
+   */
+  const instantTotal = costOf(root, 'r', closed, EMPTY);
+  const orderTotal = costOf(root, 'r', closed, new Set(bazaarPaths));
+  const spread = instantTotal !== null && orderTotal !== null ? instantTotal - orderTotal : null;
 
   return (
     <div className="card">
+      {bazaarPaths.length > 0 && (
+        <div className="craft-tools">
+          <span className="card-note">Bazaar ingredients</span>
+          <div className="seg seg-sm" role="group" aria-label="Bazaar price">
+            <button aria-pressed={allInstant} onClick={() => setOrders(new Set())}>
+              Instant buy
+            </button>
+            <button aria-pressed={allOrder} onClick={() => setOrders(new Set(bazaarPaths))}>
+              Buy order
+            </button>
+          </div>
+          {spread !== null && spread > 0 && (
+            <span className="card-note">
+              Buy orders save {exactCoins(spread)} on this build — if they fill.
+            </span>
+          )}
+        </div>
+      )}
       <div className="craft-root">
-        <Node node={root} path="r" closed={closed} onToggle={toggle} />
+        <Node node={root} path="r" closed={closed} orders={orders} onToggle={toggle} onOrder={toggleOrder} />
       </div>
     </div>
   );
@@ -226,16 +303,19 @@ interface NodeProps {
   node: CraftNode;
   path: string;
   closed: Set<string>;
+  orders: Set<string>;
   onToggle: (path: string) => void;
+  onOrder: (path: string) => void;
 }
 
-function Node({ node, path, closed, onToggle }: NodeProps) {
+function Node({ node, path, closed, orders, onToggle, onOrder }: NodeProps) {
   const craftable = node.children.length > 0;
   const buyable = (node.marketPrice ?? null) !== null;
   const isClosed = closed.has(path);
   const open = craftable && !isClosed;
 
-  const cost = costOf(node, path, closed);
+  const cost = costOf(node, path, closed, orders);
+  const unit = unitOf(node, path, orders);
 
   /**
    * What this row would cost the other way, priced by actually flipping it —
@@ -243,9 +323,18 @@ function Node({ node, path, closed, onToggle }: NodeProps) {
    * rather than a fixed full-depth number. Highlighted when it is the cheaper
    * of the two, since that is the whole reason to move a tier.
    */
-  const alt = craftable ? costOf(node, path, flipped(closed, path)) : null;
+  const alt = craftable ? costOf(node, path, flipped(closed, path), orders) : null;
   const altLabel = open ? 'buy' : 'craft';
   const altIsCheaper = alt !== null && cost !== null && alt < cost;
+
+  /**
+   * The bazaar side this row is bought on. Only offered while the row is
+   * actually being bought — an open tier is paying for its ingredients, each of
+   * which carries its own choice.
+   */
+  const canOrder = !open && orderable(node);
+  const isOrder = orders.has(path);
+  const orderSaving = node.bazaar ? (node.bazaar.instant - node.bazaar.order) * node.quantity : 0;
 
   // A tier can only close if the item can actually be bought, and can only open
   // if it has a recipe. Anything with neither is a plain leaf.
@@ -281,13 +370,37 @@ function Node({ node, path, closed, onToggle }: NodeProps) {
             </span>
           )}
           {node.name}
-          {!open && (
-            <span className="pill" style={{ marginLeft: 6 }}>
-              {craftable ? 'bought' : (VIA_LABEL[node.via ?? ''] ?? 'bought')}
-            </span>
-          )}
-          {!craftable && node.unitPrice !== null && node.quantity > 1 && (
-            <span className="muted"> @ {unitPrice(node.unitPrice)}</span>
+          {!open &&
+            (canOrder ? (
+              /* The pill doubles as the switch: it already says where the price
+                 came from, and on a bazaar row that is exactly the choice. */
+              <button
+                className={isOrder ? 'pill pill-btn is-on' : 'pill pill-btn'}
+                style={{ marginLeft: 6 }}
+                onClick={() => onOrder(path)}
+                aria-pressed={isOrder}
+                aria-label={
+                  isOrder
+                    ? `Buy ${node.name} instantly instead of with a buy order`
+                    : `Buy ${node.name} with a buy order instead of instantly`
+                }
+                title={
+                  isOrder
+                    ? `Buy order at ${unitPrice(node.bazaar!.order)} — instant is ${unitPrice(node.bazaar!.instant)}`
+                    : `Instant buy at ${unitPrice(node.bazaar!.instant)} — a buy order at ${unitPrice(
+                        node.bazaar!.order,
+                      )} saves ${exactCoins(orderSaving)}, once it fills`
+                }
+              >
+                {isOrder ? 'buy order' : 'instant'}
+              </button>
+            ) : (
+              <span className="pill" style={{ marginLeft: 6 }}>
+                {craftable ? 'bought' : (VIA_LABEL[node.via ?? ''] ?? 'bought')}
+              </span>
+            ))}
+          {!craftable && unit !== null && node.quantity > 1 && (
+            <span className="muted"> @ {unitPrice(unit)}</span>
           )}
         </span>
 
@@ -318,7 +431,9 @@ function Node({ node, path, closed, onToggle }: NodeProps) {
               node={child}
               path={`${path}.${i}`}
               closed={closed}
+              orders={orders}
               onToggle={onToggle}
+              onOrder={onOrder}
             />
           ))}
         </div>

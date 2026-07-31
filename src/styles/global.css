@@ -389,6 +389,28 @@ tbody tr:last-child td {
   white-space: nowrap;
 }
 
+/* A pill that is also a control. Reads as a label until hovered, because on a
+   craft row it sits inline in a sentence of item names. */
+.pill-btn {
+  background: transparent;
+  font: inherit;
+  font-size: 11.5px;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+.pill-btn:hover {
+  border-color: var(--text-secondary);
+  color: var(--text-primary);
+}
+
+/* The non-default side of the switch — a row deliberately moved off instant. */
+.pill-btn.is-on {
+  border-color: var(--series-1);
+  color: var(--series-1);
+  font-weight: 600;
+}
+
 .link {
   color: var(--series-1);
   font-weight: 550;
@@ -498,6 +520,18 @@ a:focus-visible {
 }
 
 /* ---------- craft tree ---------- */
+
+/* Sets the bazaar side for the whole build. Sits above the tree rather than in
+   the page head because it prices rows, not the page. */
+.craft-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--gridline);
+}
 
 .craft-row {
   display: flex;

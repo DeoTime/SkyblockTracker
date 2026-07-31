@@ -516,13 +516,19 @@ function buildByItem(flips: FlipDetail[]): ItemAggregate[] {
 const MOCK_NULL_OVOID = 150_000;
 const MOCK_REFINED_TITANIUM = 741_000;
 
-const leaf = (itemId: string, name: string, quantity: number, unitPrice: number): CraftNode => ({
+/**
+ * A bazaar ingredient. `unitPrice` is the instant-buy price, and the buy-order
+ * side sits a few percent under it — the spread is what the page's instant/order
+ * switch is for, so a mock without one leaves that control looking inert.
+ */
+const leaf = (itemId: string, name: string, quantity: number, unitPrice: number, spread = 0.94): CraftNode => ({
   itemId,
   name,
   quantity,
   unitPrice,
   totalPrice: Math.round(unitPrice * quantity),
   via: 'bazaar',
+  bazaar: { instant: unitPrice, order: Math.round(unitPrice * spread) },
   children: [],
 });
 
