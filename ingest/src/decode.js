@@ -80,6 +80,15 @@ export async function decodeItem(itemBytes) {
 
   return {
     itemId: typeof ea.id === 'string' ? ea.id : null,
+    /**
+     * The item's own identity, which survives being sold. This is what lets a
+     * purchase and a later resale be recognised as the SAME physical item —
+     * item_id only says "an Aspect of the Void", of which there are thousands.
+     *
+     * Absent on stackable items (they have no per-item identity), so a buy with
+     * no uuid simply never matches anything, which is the correct outcome.
+     */
+    itemUuid: typeof ea.uuid === 'string' ? ea.uuid : null,
     craftedAt: readTimestamp(ea),
     upgrades: applied,
     isClean: applied.length === 0,

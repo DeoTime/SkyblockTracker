@@ -53,6 +53,71 @@ export function computeFees(salePrice, bin, soldAt) {
   ];
 }
 
+/* ------------------------------------------------------------------ */
+/* Purchases                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Did this player buy this exact item before selling it?
+ *
+ * The join key is the item's own NBT uuid, which survives the trade: the same
+ * physical sword carries it into the buyer's inventory and back onto the AH.
+ * item_id would match thousands of unrelated swords, so it is not enough.
+ *
+ * Three conditions, all load-bearing:
+ *   same uuid     the same physical item, not merely the same kind of item
+ *   same player   buyer of the purchase IS the seller of this sale
+ *   bought before a purchase after the sale is a RE-acquisition of an item they
+ *                 sold, and pricing this sale from it would be time travel
+ *
+ * The most recent qualifying purchase wins: an item can go through the same
+ * player more than once, and the relevant basis is what they paid for it the
+ * last time they got it.
+ */
+function findPurchase(db, itemUuid, seller, soldAt) {
+  if (!itemUuid || !seller) return null;
+
+  try {
+    return (
+      db
+        .prepare(
+          `SELECT auction_id, price, bought_at, item_bytes FROM tracked_buys
+            WHERE item_uuid = ? AND buyer = ? AND bought_at <= ?
+            ORDER BY bought_at DESC LIMIT 1`,
+        )
+        .get(itemUuid, seller, soldAt) ?? null
+    );
+  } catch {
+    // The API and the ingest deploy separately, so an API running ahead of the
+    // ingest meets a database with no tracked_buys table. That is "no purchases
+    // recorded yet", not an error — every flip falls back to craft cost, which
+    // is exactly the behaviour before this feature existed.
+    return null;
+  }
+}
+
+/**
+ * Upgrades present on the item at the moment it was BOUGHT.
+ *
+ * These are already inside the purchase price and must not be charged again:
+ * a sword bought with Sharpness VI and resold untouched costs what was paid for
+ * it, full stop. Only what the player added afterwards is new cost.
+ *
+ * Keyed by label because that is what identifies an upgrade to a reader, and
+ * what detectUpgrades produces on both sides from the same code path.
+ */
+async function upgradesAtPurchase(itemBytes, meta, reforges) {
+  if (!itemBytes) return null; // unknown, so charge nothing away — see the caller
+
+  try {
+    const ea = await readExtraAttributes(itemBytes);
+    if (!ea) return null;
+    return new Set(detectUpgrades(ea, meta, reforges).map((u) => u.label));
+  } catch {
+    return null; // corrupt NBT: fall back to charging every upgrade
+  }
+}
+
 const RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC', 'DIVINE', 'SPECIAL', 'VERY_SPECIAL'];
 
 /**
@@ -92,16 +157,46 @@ export async function buildFlip(row, db, { detail = false } = {}) {
   const ageEstimated = craftedRaw === null && row.crafted_at === null;
 
   const book = new PriceBook(db, craftedAt);
-  const upgrades = ea ? detectUpgrades(ea, meta, reforges) : [];
 
-  /* ---- base item: craft cost first ---------------------------------- */
-  const base = await costOf(row.item_id, book);
+  /* ---- base item: what they actually paid, if we know it ------------- */
+
+  /**
+   * A recorded purchase of this exact item outranks every computed price.
+   * costOf answers "what would this cost to obtain?"; a purchase row answers
+   * "what did it cost", and on a resell those are different numbers — the
+   * whole point of buying is that you paid less than it was worth.
+   */
+  const purchase = findPurchase(db, ea?.uuid ?? null, row.seller, row.sold_at);
+
+  // Skipped entirely when we have a purchase: its answer would not be used, and
+  // its lookups would drag `priceSource` down to reflect a price nobody paid.
+  const base = purchase ? null : await costOf(row.item_id, book);
+
   // Craft cost is what the seller actually paid; a market price is only the
   // fallback for items with no recipe (and marks the flip as "bought").
-  const baseItemCost = Math.round(base.price ?? 0);
-  const acquisition = base.source === 'craft' ? 'crafted' : base.price !== null ? 'bought' : 'unknown';
+  const baseItemCost = purchase ? purchase.price : Math.round(base.price ?? 0);
+  const acquisition = purchase
+    ? 'bought'
+    : base.source === 'craft'
+      ? 'crafted'
+      : base.price !== null
+        ? 'bought'
+        : 'unknown';
 
   /* ---- upgrades ------------------------------------------------------ */
+
+  /**
+   * Upgrades that came WITH the item are already inside the purchase price;
+   * charging them again would bill the same Sharpness VI twice. Only what was
+   * added after buying is new cost.
+   *
+   * A null set (no stored NBT, or NBT we could not read) charges every upgrade
+   * — overstating cost rather than profit, which is the only direction this
+   * project is willing to be wrong in.
+   */
+  const atPurchase = purchase ? await upgradesAtPurchase(purchase.item_bytes, meta, reforges) : null;
+  const upgrades = (ea ? detectUpgrades(ea, meta, reforges) : []).filter((u) => !atPurchase?.has(u.label));
+
   let upgradeCost = 0;
   let unpricedUpgrades = 0;
   const upgradeLines = [];
@@ -167,8 +262,26 @@ export async function buildFlip(row, db, { detail = false } = {}) {
     ahFees,
     netProfit,
     profitPct: costBasis > 0 ? +((netProfit / costBasis) * 100).toFixed(1) : 0,
-    priceSource: book.worstSource(),
+    /**
+     * A purchase price is not an estimate — it is the recorded number. With no
+     * upgrades to look up, nothing about this flip was inferred, and letting
+     * worstSource() report its empty state as `live_fallback` would flag the
+     * most certain flips we have as the least trustworthy.
+     */
+    priceSource: purchase && book.sources.size === 0 ? 'own_snapshot' : book.worstSource(),
     bin: !!row.bin,
+    /**
+     * Set only when this item was bought by this player and resold. Its presence
+     * is what says "cost basis is a price paid, not a price computed" — which
+     * is a different kind of number and is surfaced as such.
+     */
+    purchase: purchase
+      ? {
+          auctionUuid: purchase.auction_id,
+          price: purchase.price,
+          boughtAt: iso(purchase.bought_at),
+        }
+      : null,
   };
 
   if (!detail) return summary;
@@ -305,6 +418,15 @@ export function rangeStart(range, now = Date.now()) {
   return days === undefined ? 0 : now - days * 86400_000;
 }
 
+/**
+ * When the seller's coins actually went into this item.
+ *
+ * For a craft that is the craft stamp. For a resell it is the purchase — the
+ * item may have been crafted by a stranger months earlier, and measuring the
+ * hold from that stamp describes someone else's holding, not theirs.
+ */
+const acquiredAt = (f) => Date.parse(f.purchase ? f.purchase.boughtAt : f.craftedAt);
+
 export function summarize(flips) {
   const n = flips.length;
   const netProfit = flips.reduce((a, f) => a + f.netProfit, 0);
@@ -312,10 +434,12 @@ export function summarize(flips) {
 
   // Hold time drives coins/hour. Flips with an estimated craft time have a
   // meaningless hold, so they are excluded from the denominator rather than
-  // contributing a zero that inflates the rate to infinity.
+  // contributing a zero that inflates the rate to infinity. A recorded purchase
+  // is an exact acquisition time, so those count even when the craft stamp was
+  // guessed — the hold is measured from the buy, which we know.
   const holdHours = flips
-    .filter((f) => !f.ageEstimated)
-    .reduce((a, f) => a + (Date.parse(f.soldAt) - Date.parse(f.craftedAt)) / 3600_000, 0);
+    .filter((f) => f.purchase || !f.ageEstimated)
+    .reduce((a, f) => a + (Date.parse(f.soldAt) - acquiredAt(f)) / 3600_000, 0);
 
   const best = flips.reduce((b, f) => (b === null || f.netProfit > b.netProfit ? f : b), null);
   const confident = flips.filter((f) => f.priceSource === 'own_snapshot').length;

@@ -224,9 +224,28 @@ function buildPool(): FlipDetail[] {
       };
     });
 
-    const upgradeCost = upgrades.reduce((s, u) => s + (u.totalPrice ?? 0), 0);
-    const unpricedUpgrades = upgrades.filter((u) => u.totalPrice === null).length;
-    const costBasis = baseItemCost + upgradeCost;
+    /**
+     * Roughly one flip in six is a RESELL rather than a craft: the same
+     * physical item bought at auction and relisted, matched by its NBT uuid.
+     *
+     * Its cost basis is the price paid — this player never ran the recipe — so
+     * it carries no ingredients and no upgrades, and the table renders its
+     * profit blue instead of green/red.
+     */
+    const purchase =
+      rand() < 0.17
+        ? {
+            auctionUuid: `mock-buy-${i.toString().padStart(4, '0')}`,
+            // Bought under what crafting one costs, which is the entire reason
+            // to buy rather than craft.
+            price: Math.round(baseItemCost * (0.72 + rand() * 0.2)),
+            boughtAt: new Date(craftedAtMs + Math.round(holdMs * 0.4)).toISOString(),
+          }
+        : null;
+
+    const upgradeCost = purchase ? 0 : upgrades.reduce((s, u) => s + (u.totalPrice ?? 0), 0);
+    const unpricedUpgrades = purchase ? 0 : upgrades.filter((u) => u.totalPrice === null).length;
+    const costBasis = (purchase ? purchase.price : baseItemCost) + upgradeCost;
 
     const bin = rand() > 0.28;
     const salePrice = Math.round(recipe.sale * saleDrift);
@@ -249,8 +268,8 @@ function buildPool(): FlipDetail[] {
       listedAt: new Date(listedAtMs).toISOString(),
       soldAt: new Date(soldAtMs).toISOString(),
       ageEstimated: rand() < 0.12,
-      acquisition: 'crafted',
-      baseItemCost,
+      acquisition: purchase ? 'bought' : 'crafted',
+      baseItemCost: purchase ? purchase.price : baseItemCost,
       upgradeCost,
       costBasis,
       unpricedUpgrades,
@@ -258,10 +277,12 @@ function buildPool(): FlipDetail[] {
       ahFees: feeTotal,
       netProfit,
       profitPct: (netProfit / costBasis) * 100,
-      priceSource,
+      // A recorded purchase price is exact — nothing about it was inferred.
+      priceSource: purchase ? 'own_snapshot' : priceSource,
       bin,
-      ingredients,
-      upgrades,
+      purchase,
+      ingredients: purchase ? [] : ingredients,
+      upgrades: purchase ? [] : upgrades,
       metadata: {
         itemId: recipe.itemId,
         name: recipe.itemName,

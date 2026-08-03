@@ -14,13 +14,19 @@ import { dirname } from 'node:path';
  * basis needs to know what an Etherwarp Conduit or a clean Aspect of the Void
  * was actually selling for at that time, and those are other people's sales.
  *
- * So we keep two different shapes:
+ * So we keep three different shapes:
  *
- *   tracked_sales  full fidelity, raw NBT, for our players only (~20 rows/day)
+ *   tracked_sales  full fidelity, raw NBT, our players SELLING (~20 rows/day)
+ *   tracked_buys   full fidelity, raw NBT, our players BUYING  (~20 rows/day)
  *   price_rollup   per (item, hour, clean?) min/max/count for EVERYONE, no NBT
  *
  * The rollup is what makes historical cost basis possible; the raw rows are
  * what make a flip auditable. Neither alone is sufficient.
+ *
+ * Both tracked tables come out of the same ended-auctions feed, matched on
+ * different fields — seller for one, buyer for the other. A tracked player
+ * selling to another tracked player lands in both, which is correct: it is one
+ * player's sale and another's purchase.
  */
 
 export function openDb(path) {
@@ -47,6 +53,35 @@ export function openDb(path) {
       ingested_at    INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_tracked_seller ON tracked_sales(seller, sold_at DESC);
+
+    -- The other side of the same feed: auctions a tracked player BOUGHT.
+    --
+    -- Until this existed, a purchase fell through to price_rollup like any
+    -- stranger's sale and its NBT was discarded, so a resold item was costed at
+    -- what it would cost to CRAFT rather than at what was actually paid for it.
+    -- On a pure resell those are different numbers and only one of them is the
+    -- cost basis.
+    --
+    -- item_uuid is the join key back to a later sale — the item's own identity,
+    -- which survives the trade. Indexed because that lookup happens per flip.
+    --
+    -- item_bytes is kept for the same reason tracked_sales keeps it: the buy is
+    -- half of an auditable flip, and an upgrade applied AFTER purchase can only
+    -- be told apart from one that came with the item by comparing the two.
+    CREATE TABLE IF NOT EXISTS tracked_buys (
+      auction_id   TEXT PRIMARY KEY,
+      buyer        TEXT NOT NULL,
+      seller       TEXT,
+      bought_at    INTEGER NOT NULL,
+      price        INTEGER NOT NULL,
+      bin          INTEGER NOT NULL,
+      item_id      TEXT,
+      item_uuid    TEXT,
+      item_bytes   TEXT,
+      ingested_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_buys_item ON tracked_buys(item_uuid, bought_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_buys_buyer ON tracked_buys(buyer, bought_at DESC);
 
     -- Everyone's sales, collapsed to hourly price stats. No NBT retained.
     -- is_clean separates base-item prices from upgraded ones: mixing them is
@@ -118,6 +153,14 @@ export function makeStatements(db) {
          item_id, crafted_at, upgrades, item_bytes, ingested_at)
       VALUES (@auction_id, @seller, @seller_profile, @buyer, @sold_at, @price, @bin,
               @item_id, @crafted_at, @upgrades, @item_bytes, @ingested_at)
+    `),
+
+    insertBuy: db.prepare(`
+      INSERT OR IGNORE INTO tracked_buys
+        (auction_id, buyer, seller, bought_at, price, bin,
+         item_id, item_uuid, item_bytes, ingested_at)
+      VALUES (@auction_id, @buyer, @seller, @bought_at, @price, @bin,
+              @item_id, @item_uuid, @item_bytes, @ingested_at)
     `),
 
     upsertRollup: db.prepare(`

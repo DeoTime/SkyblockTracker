@@ -84,6 +84,21 @@ export interface ItemMetadata {
   gemstoneSlots: number;
 }
 
+/**
+ * The auction where this player BOUGHT the item they later sold, matched on the
+ * item's own NBT uuid — the same physical item, not merely the same kind.
+ *
+ * Its presence changes what `baseItemCost` means: a price actually paid rather
+ * than one computed from a recipe. That is a materially more certain number,
+ * and the table marks those flips so the two are never read as the same thing.
+ */
+export interface FlipPurchase {
+  auctionUuid: string;
+  /** What they paid. This becomes the flip's baseItemCost outright. */
+  price: number;
+  boughtAt: string;
+}
+
 export interface FlipSummary {
   auctionUuid: string;
   itemId: string;
@@ -125,6 +140,12 @@ export interface FlipSummary {
    * responses from an older backend, which is treated as "included".
    */
   excluded?: boolean;
+  /**
+   * The purchase this item was resold from, when there is one. Null for crafts,
+   * and for anything sold before the ingest began recording purchases — that
+   * feed cannot be backfilled, so early history has no buy side to match.
+   */
+  purchase?: FlipPurchase | null;
 }
 
 export interface FlipDetail extends FlipSummary {

@@ -141,7 +141,13 @@ export function FlipsTable({ flips, showItemLink = true, onToggleExclude, exclud
               </td>
               <td
                 className="num"
-                title={`${exactCoins(f.baseItemCost)} base item (${f.acquisition}) + ${exactCoins(f.upgradeCost)} upgrades`}
+                title={
+                  f.purchase
+                    ? `${exactCoins(f.purchase.price)} paid for this exact item on ${stampCompact(
+                        f.purchase.boughtAt,
+                      )} + ${exactCoins(f.upgradeCost)} upgrades added after`
+                    : `${exactCoins(f.baseItemCost)} base item (${f.acquisition}) + ${exactCoins(f.upgradeCost)} upgrades`
+                }
               >
                 {coins(f.costBasis)}
                 {f.unpricedUpgrades > 0 && (
@@ -153,7 +159,27 @@ export function FlipsTable({ flips, showItemLink = true, onToggleExclude, exclud
               </td>
               <td className="num">{coins(f.salePrice)}</td>
               <td className="num muted">{coins(f.ahFees)}</td>
-              <td className="num" style={{ fontWeight: 600, color: f.netProfit >= 0 ? 'var(--good-text)' : 'var(--critical)' }}>
+              {/* Blue means the cost basis is a price actually PAID for this
+                  exact item, not one computed from its recipe — a different
+                  kind of number, so it does not wear the same green/red. */}
+              <td
+                className="num"
+                style={{
+                  fontWeight: 600,
+                  color: f.purchase
+                    ? 'var(--series-1)'
+                    : f.netProfit >= 0
+                      ? 'var(--good-text)'
+                      : 'var(--critical)',
+                }}
+                title={
+                  f.purchase
+                    ? `Resold: bought for ${exactCoins(f.purchase.price)}, sold for ${exactCoins(
+                        f.salePrice,
+                      )}. Cost basis is what was paid, not the craft cost.`
+                    : undefined
+                }
+              >
                 {signedCoins(f.netProfit)}
               </td>
               <td className="num muted">{signedPct(f.profitPct)}</td>

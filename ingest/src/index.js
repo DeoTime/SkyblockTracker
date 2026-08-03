@@ -58,7 +58,8 @@ const insertBatch = db.transaction((rows) => {
   for (const r of rows) {
     st.seen.run(r.auction_id, r.ingested_at);
     if (r.tracked) st.insertTracked.run(r.tracked);
-    else st.upsertRollup.run(r.rollup);
+    if (r.buy) st.insertBuy.run(r.buy);
+    if (r.rollup) st.upsertRollup.run(r.rollup);
   }
 });
 
@@ -78,54 +79,84 @@ async function pollEnded() {
     }
 
     const itemId = decoded?.itemId ?? null;
-    const isTracked = TRACKED.has(a.seller);
+    // Independent, not exclusive: one tracked player selling to another is both
+    // a tracked sale and a tracked purchase, and dropping either half would
+    // leave one of their two dashboards wrong.
+    const soldByUs = TRACKED.has(a.seller);
+    const boughtByUs = !!a.buyer && TRACKED.has(a.buyer);
 
-    if (isTracked) {
-      rows.push({
+    const row = { auction_id: a.auction_id, ingested_at: now };
+
+    if (soldByUs) {
+      row.tracked = {
         auction_id: a.auction_id,
+        seller: a.seller,
+        seller_profile: a.seller_profile ?? null,
+        buyer: a.buyer ?? null,
+        sold_at: a.timestamp,
+        price: a.price,
+        bin: a.bin ? 1 : 0,
+        item_id: itemId,
+        crafted_at: decoded?.craftedAt ?? null,
+        upgrades: decoded ? JSON.stringify(decoded.upgrades) : null,
+        item_bytes: a.item_bytes,
         ingested_at: now,
-        tracked: {
-          auction_id: a.auction_id,
-          seller: a.seller,
-          seller_profile: a.seller_profile ?? null,
-          buyer: a.buyer ?? null,
-          sold_at: a.timestamp,
-          price: a.price,
-          bin: a.bin ? 1 : 0,
-          item_id: itemId,
-          crafted_at: decoded?.craftedAt ?? null,
-          upgrades: decoded ? JSON.stringify(decoded.upgrades) : null,
-          item_bytes: a.item_bytes,
-          ingested_at: now,
-        },
-      });
-    } else if (itemId) {
-      rows.push({
-        auction_id: a.auction_id,
-        ingested_at: now,
-        rollup: {
-          item_id: itemId,
-          hour: Math.floor(a.timestamp / 3_600_000),
-          is_clean: decoded.isClean ? 1 : 0,
-          price: a.price,
-        },
-      });
-    } else {
-      rows.push({ auction_id: a.auction_id, ingested_at: now });
+      };
     }
+
+    if (boughtByUs) {
+      row.buy = {
+        auction_id: a.auction_id,
+        buyer: a.buyer,
+        seller: a.seller ?? null,
+        bought_at: a.timestamp,
+        price: a.price,
+        bin: a.bin ? 1 : 0,
+        item_id: itemId,
+        item_uuid: decoded?.itemUuid ?? null,
+        item_bytes: a.item_bytes,
+        ingested_at: now,
+      };
+    }
+
+    // A stranger's sale is a market data point even when we are the buyer —
+    // that is exactly what the rollup is for. Only OUR OWN sales are held out,
+    // so the prices we cost against are never our own asking prices.
+    if (!soldByUs && itemId) {
+      row.rollup = {
+        item_id: itemId,
+        hour: Math.floor(a.timestamp / 3_600_000),
+        is_clean: decoded.isClean ? 1 : 0,
+        price: a.price,
+      };
+    }
+
+    rows.push(row);
   }
 
   if (rows.length) insertBatch(rows);
 
   const trackedCount = rows.filter((r) => r.tracked).length;
-  st.log.run(now, 'ended', body.auctions.length, rows.length, trackedCount ? `tracked:${trackedCount}` : null);
+  const buyCount = rows.filter((r) => r.buy).length;
+  const note = [trackedCount && `tracked:${trackedCount}`, buyCount && `buys:${buyCount}`]
+    .filter(Boolean)
+    .join(' ');
+  st.log.run(now, 'ended', body.auctions.length, rows.length, note || null);
 
   if (rows.length || trackedCount) {
-    log(`ended: ${body.auctions.length} returned, ${rows.length} new${trackedCount ? `, ${trackedCount} TRACKED` : ''}`);
+    log(`ended: ${body.auctions.length} returned, ${rows.length} new${note ? `, ${note}` : ''}`);
   }
-  if (trackedCount) {
-    for (const r of rows.filter((x) => x.tracked)) {
+  for (const r of rows) {
+    if (r.tracked) {
       log(`  >> ${r.tracked.item_id} sold for ${r.tracked.price.toLocaleString('en-US')} by ${r.tracked.seller.slice(0, 8)}`);
+    }
+    if (r.buy) {
+      // The uuid is logged because a buy with none can never match a later
+      // sale, and that is worth being able to see from the logs alone.
+      log(
+        `  << ${r.buy.item_id} bought for ${r.buy.price.toLocaleString('en-US')} by ${r.buy.buyer.slice(0, 8)}` +
+          ` [${r.buy.item_uuid ? r.buy.item_uuid.slice(0, 8) : 'NO UUID'}]`,
+      );
     }
   }
 }
@@ -197,7 +228,7 @@ setInterval(
 ).unref();
 
 log(`starting — db ${DB_PATH}`);
-log(`tracking ${TRACKED.size} sellers: ${[...TRACKED].map((u) => u.slice(0, 8)).join(', ')}`);
+log(`tracking ${TRACKED.size} players (both sides): ${[...TRACKED].map((u) => u.slice(0, 8)).join(', ')}`);
 log(`ended every ${ENDED_INTERVAL}ms, bazaar every ${BAZAAR_INTERVAL}ms, no API key required`);
 
 const loops = [

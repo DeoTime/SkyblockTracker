@@ -132,6 +132,11 @@ today; the UI renders `—`.
   "netProfit": 9682224, "profitPct": 19.1,   // profitPct is over costBasis
   "priceSource": "live_fallback", "bin": false,
 
+  // Set when this player BOUGHT this exact item (matched on the NBT uuid) and
+  // resold it. baseItemCost is then the price paid, not a computed one, and the
+  // UI renders the flip's profit blue. Null for crafts. See §7.1.
+  "purchase": { "auctionUuid": "...", "price": 21000000, "boughtAt": "..." },
+
   "ingredients": [
     { "itemId": "PERFECT_RUBY_GEM", "name": "Perfect Ruby Gemstone",
       "quantity": 1, "unitPrice": 15959434, "totalPrice": 15959434,
@@ -296,16 +301,21 @@ It cannot recover older history.
 Per auction:
 
 1. Decode `item_bytes` → NBT (§6).
-2. Read `ExtraAttributes.id` and `ExtraAttributes.timestamp`.
-3. Determine `baseItemCost` (§7.1): recipe total if the item is craftable,
-   cheapest clean market listing if not, the cheaper of the two if both.
-   **No recipe is not a reason to skip** — it usually means an upgrade-flip.
-4. Price each ingredient at `craftedAt` (§7) when the base was crafted.
-5. Extract upgrades from the same `ExtraAttributes` (§6.2), price them at
+2. Read `ExtraAttributes.id`, `ExtraAttributes.uuid` and `.timestamp`.
+3. Look up `tracked_buys` on (`uuid`, this seller, bought at or before the sale).
+   A hit means they bought this exact item and resold it: `baseItemCost` is the
+   price paid and steps 4–5 change — skip the recipe entirely, and charge only
+   upgrades absent from the purchase's own NBT (§7.1).
+4. Otherwise determine `baseItemCost` (§7.1): recipe total if the item is
+   craftable, cheapest clean market listing if not, the cheaper of the two if
+   both. **No recipe is not a reason to skip** — it usually means an
+   upgrade-flip.
+5. Price each ingredient at `craftedAt` (§7) when the base was crafted.
+6. Extract upgrades from the same `ExtraAttributes` (§6.2), price them at
    `craftedAt` → `upgradeCost`, counting anything unpriceable.
-6. `costBasis = baseItemCost + upgradeCost`.
-7. Compute fees (§8); `netProfit = salePrice − fees − costBasis`.
-8. Insert into `flips` (idempotent on `auction_uuid`).
+7. `costBasis = baseItemCost + upgradeCost`.
+8. Compute fees (§8); `netProfit = salePrice − fees − costBasis`.
+9. Insert into `flips` (idempotent on `auction_uuid`).
 
 ### 4.4 Recipe syncer
 
@@ -560,8 +570,28 @@ reported loss.
 
 | Acquisition | baseItemCost |
 |---|---|
-| `crafted` | sum of recipe ingredients at `craftedAt` (§5, §7) — **preferred** |
-| `bought` | cheapest **clean** market listing, when no recipe exists |
+| `bought`, with a recorded purchase | **what they actually paid** — outranks everything below |
+| `crafted` | sum of recipe ingredients at `craftedAt` (§5, §7) — preferred among computed prices |
+| `bought`, no purchase on record | cheapest **clean** market listing, when no recipe exists |
+
+**A recorded purchase wins outright.** `tracked_buys` holds auctions a tracked
+player *bought*, joined to a later sale on the item's own NBT `uuid` — the same
+physical item, not merely the same kind of item. Everything else in this table
+estimates what an item *would* cost to obtain; a purchase row states what it
+*did*. On a resell those differ by exactly the margin the flipper was going for.
+
+Two consequences worth stating:
+
+- Upgrades already on the item **at purchase** are inside the price paid and are
+  not charged again. Only what was added afterwards is new cost. Both sides'
+  NBT is retained precisely so the two can be told apart.
+- Hold time for such a flip runs from the **purchase**, not the craft stamp —
+  the item may have been crafted by a stranger months earlier, and measuring
+  from that describes someone else's holding.
+
+The buy side is **forward-only**: the ended-auctions feed cannot be backfilled,
+so sales predating the ingest that records purchases have no buy row to match
+and keep costing at craft cost.
 
 This is not a rounding difference. Live, for the tracked seller's Aspect of the
 Void listings:

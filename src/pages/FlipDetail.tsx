@@ -64,11 +64,28 @@ export function FlipDetail() {
           <div className="card">
             <div className="card-head">
               <div>
-                <h2>Craft cost at {fullDate(flip.craftedAt)}</h2>
+                {/* A resold item was never crafted by this player, so costing it
+                    "at craft time" would date the basis to a stranger's craft. */}
+                <h2>
+                  {flip.purchase
+                    ? `Bought at ${fullDate(flip.purchase.boughtAt)}`
+                    : `Craft cost at ${fullDate(flip.craftedAt)}`}
+                </h2>
               </div>
             </div>
 
             <div>
+              {flip.purchase && (
+                <div className="breakdown-row">
+                  <span className="breakdown-name">
+                    This exact item, bought at auction
+                    <span className="pill" style={{ marginLeft: 6 }} title="Matched on the item's NBT uuid">
+                      resold
+                    </span>
+                  </span>
+                  <span className="breakdown-val">{exactCoins(flip.purchase.price)}</span>
+                </div>
+              )}
               {flip.ingredients.map((ing) => (
                 <div className="breakdown-row" key={ing.itemId}>
                   <span className="breakdown-name" title={ing.name}>
@@ -109,7 +126,9 @@ export function FlipDetail() {
                 </div>
               ))}
               <div className="total-row">
-                <span>{flip.acquisition === 'crafted' ? 'Recipe subtotal' : 'Base item'}</span>
+                <span>
+                  {flip.purchase ? 'Paid' : flip.acquisition === 'crafted' ? 'Recipe subtotal' : 'Base item'}
+                </span>
                 <span>{exactCoins(flip.baseItemCost)}</span>
               </div>
             </div>
@@ -183,7 +202,11 @@ export function FlipDetail() {
               ))}
               <div className="breakdown-row">
                 <span className="breakdown-name">
-                  {flip.acquisition === 'crafted' ? 'Recipe ingredients' : 'Base item purchase'}
+                  {flip.purchase
+                    ? 'Bought for'
+                    : flip.acquisition === 'crafted'
+                      ? 'Recipe ingredients'
+                      : 'Base item purchase'}
                 </span>
                 <span className="breakdown-val">−{exactCoins(flip.baseItemCost)}</span>
               </div>
@@ -195,7 +218,15 @@ export function FlipDetail() {
               )}
               <div className="total-row">
                 <span>Net profit</span>
-                <span style={{ color: flip.netProfit >= 0 ? 'var(--good-text)' : 'var(--critical)' }}>
+                <span
+                  style={{
+                    color: flip.purchase
+                      ? 'var(--series-1)'
+                      : flip.netProfit >= 0
+                        ? 'var(--good-text)'
+                        : 'var(--critical)',
+                  }}
+                >
                   {signedCoins(flip.netProfit)}
                 </span>
               </div>
