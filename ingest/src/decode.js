@@ -28,6 +28,22 @@ const UPGRADE_KEYS = [
   'talisman_enrichment',
 ];
 
+/**
+ * Canonical form of an item's NBT uuid, for joining a purchase to a later sale.
+ *
+ * Hypixel's NBT and Coflnet's flattened map both spell it hyphenated and
+ * lowercase today, so this is belt-and-braces — but the join is an equality
+ * test on a text column, and a single upstream reformatting would silently stop
+ * matching anything rather than failing loudly.
+ *
+ * Mirrored by normalizeItemUuid in api/src/flips.js — keep them in step.
+ */
+export function normalizeItemUuid(uuid) {
+  if (typeof uuid !== 'string') return null;
+  const clean = uuid.trim().toLowerCase().replace(/-/g, '');
+  return clean.length ? clean : null;
+}
+
 function simplify(v) {
   if (v === null || v === undefined) return v;
   if (Array.isArray(v)) return v.map(simplify);
@@ -88,7 +104,7 @@ export async function decodeItem(itemBytes) {
      * Absent on stackable items (they have no per-item identity), so a buy with
      * no uuid simply never matches anything, which is the correct outcome.
      */
-    itemUuid: typeof ea.uuid === 'string' ? ea.uuid : null,
+    itemUuid: normalizeItemUuid(ea.uuid),
     craftedAt: readTimestamp(ea),
     upgrades: applied,
     isClean: applied.length === 0,

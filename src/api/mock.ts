@@ -240,6 +240,9 @@ function buildPool(): FlipDetail[] {
             // to buy rather than craft.
             price: Math.round(baseItemCost * (0.72 + rand() * 0.2)),
             boughtAt: new Date(craftedAtMs + Math.round(holdMs * 0.4)).toISOString(),
+            // Older buys come from the Coflnet backfill; recent ones the live
+            // feed caught itself. Both shapes need to render.
+            source: (rand() < 0.5 ? 'coflnet' : 'hypixel') as 'coflnet' | 'hypixel',
           }
         : null;
 

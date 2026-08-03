@@ -97,6 +97,13 @@ export interface FlipPurchase {
   /** What they paid. This becomes the flip's baseItemCost outright. */
   price: number;
   boughtAt: string;
+  /**
+   * Which writer recorded it:
+   * - `hypixel`: the live ended-auctions feed, with raw NBT
+   * - `coflnet`: backfilled from sky.coflnet.com, which **requires attribution
+   *   in the UI** — FlipDetail renders it. Do not drop it.
+   */
+  source?: 'hypixel' | 'coflnet';
 }
 
 export interface FlipSummary {

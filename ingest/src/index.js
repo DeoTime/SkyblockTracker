@@ -1,6 +1,7 @@
 import { openDb, makeStatements } from './db.js';
 import { decodeItem } from './decode.js';
 import { loadSnipeConfig, makeSnipe } from './snipe.js';
+import { loadCoflnetConfig, makeCoflnetBuys } from './coflnet.js';
 
 /**
  * Continuous capture of Hypixel SkyBlock sales and bazaar prices.
@@ -115,6 +116,10 @@ async function pollEnded() {
         item_id: itemId,
         item_uuid: decoded?.itemUuid ?? null,
         item_bytes: a.item_bytes,
+        source: 'hypixel',
+        // Raw NBT is retained, which is strictly better than a fingerprint —
+        // the API diffs the two items directly. Only Coflnet rows need this.
+        upgrade_keys: null,
         ingested_at: now,
       };
     }
@@ -235,6 +240,26 @@ const loops = [
   loop('ended', pollEnded, ENDED_INTERVAL),
   loop('bazaar', pollBazaar, BAZAAR_INTERVAL),
 ];
+
+/**
+ * Backfill of past purchases. The two buy writers overlap deliberately: the
+ * live feed above catches anything bought while this process is up, and this
+ * reaches back over everything it missed — including every purchase made before
+ * the buy side was recorded at all.
+ */
+const coflCfg = loadCoflnetConfig();
+if (coflCfg) {
+  const pollCoflnetBuys = makeCoflnetBuys(db, st, log, coflCfg);
+  loops.push(loop('coflnet', pollCoflnetBuys, coflCfg.intervalMs));
+  log(
+    `coflnet buys: ${coflCfg.players.length} players, every ${Math.round(coflCfg.intervalMs / 1000)}s, ` +
+      `<=${coflCfg.maxPages} pages + ${coflCfg.maxDetails} details per pass, ` +
+      `${coflCfg.horizonDays}d horizon, ${coflCfg.gapMs}ms between requests — ` +
+      `${st.countBuys.get().n} purchases on record`,
+  );
+} else {
+  log('coflnet buys: disabled (set COFLNET_BUYS_ENABLED=1 to backfill past purchases)');
+}
 
 const snipeCfg = loadSnipeConfig();
 if (snipeCfg) {

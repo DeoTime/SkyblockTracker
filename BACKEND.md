@@ -589,9 +589,30 @@ Two consequences worth stating:
   the item may have been crafted by a stranger months earlier, and measuring
   from that describes someone else's holding.
 
-The buy side is **forward-only**: the ended-auctions feed cannot be backfilled,
-so sales predating the ingest that records purchases have no buy row to match
-and keep costing at craft cost.
+The buy side has **two writers**, and they are complements:
+
+| Source | Reach | Item detail |
+|---|---|---|
+| `hypixel` | real-time only — the ended-auctions feed is a 60s non-overlapping window | raw NBT |
+| `coflnet` | backwards over auction history (default 90 days) | flattened NBT only |
+
+Hypixel's feed cannot be backfilled, so on its own the buy side would only ever
+know about purchases made while the ingest was up. The Coflnet backfill
+(`ingest/src/coflnet.js`, off unless `COFLNET_BUYS_ENABLED=1`) recovers the rest
+by walking `/player/{uuid}/bids`, confirming each win against `/auction/{id}`,
+and joining on `flatNbt.uuid`. Both writers `INSERT OR IGNORE`, so whichever
+sees an auction first keeps it — and the Hypixel row is the better one, because
+raw NBT lets the upgrade diff work per-upgrade.
+
+Coflnet rows have no raw NBT, so they carry an upgrade **fingerprint** instead
+(`upgrade_keys`, in Coflnet's flattened vocabulary). The API compares it against
+the same fingerprint taken from the sold item: identical means nothing was added
+and the price paid is the entire basis; anything else charges every upgrade.
+Every failure mode — no fingerprint, unparseable one, vocabularies that do not
+line up — lands on that conservative side.
+
+⚠ Coflnet requires **attribution in the UI**; `FlipDetail` renders it on any
+flip costed from a backfilled purchase.
 
 This is not a rounding difference. Live, for the tracked seller's Aspect of the
 Void listings:

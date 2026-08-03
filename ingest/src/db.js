@@ -68,6 +68,11 @@ export function openDb(path) {
     -- item_bytes is kept for the same reason tracked_sales keeps it: the buy is
     -- half of an auditable flip, and an upgrade applied AFTER purchase can only
     -- be told apart from one that came with the item by comparing the two.
+    -- source tells the two writers apart:
+    --   hypixel  the live ended-auctions feed — has raw NBT, forward-only
+    --   coflnet  backfilled from sky.coflnet.com — no raw NBT, reaches history
+    -- upgrade_keys carries the Coflnet rows' upgrade fingerprint, which is the
+    -- only thing standing in for the NBT they do not come with.
     CREATE TABLE IF NOT EXISTS tracked_buys (
       auction_id   TEXT PRIMARY KEY,
       buyer        TEXT NOT NULL,
@@ -78,10 +83,23 @@ export function openDb(path) {
       item_id      TEXT,
       item_uuid    TEXT,
       item_bytes   TEXT,
+      source       TEXT,
+      upgrade_keys TEXT,
       ingested_at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_buys_item ON tracked_buys(item_uuid, bought_at DESC);
     CREATE INDEX IF NOT EXISTS idx_buys_buyer ON tracked_buys(buyer, bought_at DESC);
+
+    -- Coflnet auctions already examined, WHETHER OR NOT they turned into a buy.
+    -- Losing bids never produce a tracked_buys row, so without this the backfill
+    -- would re-fetch every one of them on every pass forever. Deliberately not
+    -- seen_auctions: that table is pruned after 6h to bound the dedupe set,
+    -- whereas this has to remember indefinitely for the skip to hold.
+    CREATE TABLE IF NOT EXISTS coflnet_checked (
+      auction_id TEXT PRIMARY KEY,
+      checked_at INTEGER NOT NULL,
+      won        INTEGER NOT NULL
+    );
 
     -- Everyone's sales, collapsed to hourly price stats. No NBT retained.
     -- is_clean separates base-item prices from upgraded ones: mixing them is
@@ -142,6 +160,22 @@ export function openDb(path) {
     CREATE INDEX IF NOT EXISTS idx_snipe_detected ON snipe_alerts(detected_at DESC);
   `);
 
+  /**
+   * CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so
+   * columns added after a database is in the field need this. Duplicate-column
+   * is the expected outcome on every run after the first and is not an error.
+   */
+  for (const [table, column, decl] of [
+    ['tracked_buys', 'source', 'TEXT'],
+    ['tracked_buys', 'upgrade_keys', 'TEXT'],
+  ]) {
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
+    } catch {
+      /* already present */
+    }
+  }
+
   return db;
 }
 
@@ -155,13 +189,25 @@ export function makeStatements(db) {
               @item_id, @crafted_at, @upgrades, @item_bytes, @ingested_at)
     `),
 
+    /**
+     * INSERT OR IGNORE, so the live feed and the Coflnet backfill can both
+     * claim the same auction without fighting. Whichever arrives first wins,
+     * and the live feed is the one worth keeping: it carries raw NBT.
+     */
     insertBuy: db.prepare(`
       INSERT OR IGNORE INTO tracked_buys
         (auction_id, buyer, seller, bought_at, price, bin,
-         item_id, item_uuid, item_bytes, ingested_at)
+         item_id, item_uuid, item_bytes, source, upgrade_keys, ingested_at)
       VALUES (@auction_id, @buyer, @seller, @bought_at, @price, @bin,
-              @item_id, @item_uuid, @item_bytes, @ingested_at)
+              @item_id, @item_uuid, @item_bytes, @source, @upgrade_keys, @ingested_at)
     `),
+
+    /* Coflnet backfill bookkeeping. */
+    markCoflChecked: db.prepare(
+      'INSERT OR REPLACE INTO coflnet_checked (auction_id, checked_at, won) VALUES (?, ?, ?)',
+    ),
+    wasCoflChecked: db.prepare('SELECT 1 FROM coflnet_checked WHERE auction_id = ?'),
+    countBuys: db.prepare('SELECT COUNT(*) AS n FROM tracked_buys'),
 
     upsertRollup: db.prepare(`
       INSERT INTO price_rollup (item_id, hour, is_clean, min_price, max_price, sum_price, sales)

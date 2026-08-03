@@ -58,6 +58,18 @@ export function computeFees(salePrice, bin, soldAt) {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Canonical form of an item's NBT uuid, for joining a purchase to a later sale.
+ * Mirrors normalizeItemUuid in ingest/src/decode.js — keep them in step, since
+ * one side writing a form the other does not read means the join silently
+ * matches nothing instead of failing.
+ */
+function normalizeItemUuid(uuid) {
+  if (typeof uuid !== 'string') return null;
+  const clean = uuid.trim().toLowerCase().replace(/-/g, '');
+  return clean.length ? clean : null;
+}
+
+/**
  * Did this player buy this exact item before selling it?
  *
  * The join key is the item's own NBT uuid, which survives the trade: the same
@@ -75,17 +87,18 @@ export function computeFees(salePrice, bin, soldAt) {
  * last time they got it.
  */
 function findPurchase(db, itemUuid, seller, soldAt) {
-  if (!itemUuid || !seller) return null;
+  const uuid = normalizeItemUuid(itemUuid);
+  if (!uuid || !seller) return null;
 
   try {
     return (
       db
         .prepare(
-          `SELECT auction_id, price, bought_at, item_bytes FROM tracked_buys
+          `SELECT auction_id, price, bought_at, item_bytes, source, upgrade_keys FROM tracked_buys
             WHERE item_uuid = ? AND buyer = ? AND bought_at <= ?
             ORDER BY bought_at DESC LIMIT 1`,
         )
-        .get(itemUuid, seller, soldAt) ?? null
+        .get(uuid, seller, soldAt) ?? null
     );
   } catch {
     // The API and the ingest deploy separately, so an API running ahead of the
@@ -97,26 +110,103 @@ function findPurchase(db, itemUuid, seller, soldAt) {
 }
 
 /**
+ * Raw ExtraAttributes key -> the name Coflnet flattens it to.
+ *
+ * The two vocabularies are mostly identical and disagree in exactly the places
+ * that matter: hot potato books arrive as `hpc`, dungeon stars as
+ * `dungeon_item`, and enchantments are lifted out of the map entirely. Comparing
+ * the raw names against a Coflnet fingerprint would read a starred, potatoed
+ * sword as bare. Kept in step with ingest/src/coflnet.js.
+ */
+const RAW_TO_FLAT = {
+  enchantments: 'enchantments',
+  modifier: 'modifier',
+  hot_potato_count: 'hpc',
+  rarity_upgrades: 'rarity_upgrades',
+  upgrade_level: 'upgrade_level',
+  dungeon_item_level: 'dungeon_item',
+  gems: 'gems',
+  runes: 'runes',
+  art_of_war_count: 'art_of_war_count',
+  ethermerge: 'ethermerge',
+  tuned_transmission: 'tuned_transmission',
+  dye_item: 'dye_item',
+  skin: 'skin',
+  ability_scroll: 'ability_scroll',
+  power_ability_scroll: 'power_ability_scroll',
+  mana_disintegrator_count: 'mana_disintegrator_count',
+  wood_singularity_count: 'wood_singularity_count',
+  talisman_enrichment: 'talisman_enrichment',
+  farming_for_dummies_count: 'farming_for_dummies_count',
+};
+
+/** The sold item's upgrade set, spoken in Coflnet's vocabulary. */
+function flatUpgradeSetOf(ea) {
+  const set = new Set();
+  for (const [raw, flat] of Object.entries(RAW_TO_FLAT)) {
+    if (ea && raw in ea) set.add(flat);
+  }
+  return [...set].sort();
+}
+
+const sameSet = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+/**
  * Upgrades present on the item at the moment it was BOUGHT.
  *
- * These are already inside the purchase price and must not be charged again:
- * a sword bought with Sharpness VI and resold untouched costs what was paid for
+ * These are already inside the purchase price and must not be charged again: a
+ * sword bought with Sharpness VI and resold untouched costs what was paid for
  * it, full stop. Only what the player added afterwards is new cost.
  *
- * Keyed by label because that is what identifies an upgrade to a reader, and
- * what detectUpgrades produces on both sides from the same code path.
+ * Two purchase shapes, because the two writers see different things:
+ *
+ *   hypixel  raw NBT was captured, so the two items are compared directly and
+ *            individual upgrades can be told apart by label
+ *   coflnet  backfilled, flattened NBT only. There is no per-upgrade identity
+ *            to match on, so the question narrows to "is this the same item it
+ *            was when bought?" — equal fingerprints mean nothing was added and
+ *            the price paid is the whole basis
+ *
+ * Returning null means "charge every upgrade", which overstates cost rather
+ * than profit. Every failure here — no NBT, corrupt NBT, a fingerprint that
+ * does not line up — lands on that side deliberately.
  */
-async function upgradesAtPurchase(itemBytes, meta, reforges) {
-  if (!itemBytes) return null; // unknown, so charge nothing away — see the caller
-
-  try {
-    const ea = await readExtraAttributes(itemBytes);
-    if (!ea) return null;
-    return new Set(detectUpgrades(ea, meta, reforges).map((u) => u.label));
-  } catch {
-    return null; // corrupt NBT: fall back to charging every upgrade
+async function upgradesAtPurchase(purchase, soldEa, meta, reforges) {
+  if (purchase.item_bytes) {
+    try {
+      const ea = await readExtraAttributes(purchase.item_bytes);
+      if (ea) return new Set(detectUpgrades(ea, meta, reforges).map((u) => u.label));
+    } catch {
+      /* corrupt NBT — fall through to charging everything */
+    }
+    return null;
   }
+
+  if (purchase.upgrade_keys) {
+    let atPurchase;
+    try {
+      atPurchase = JSON.parse(purchase.upgrade_keys);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(atPurchase)) return null;
+
+    // Unchanged since purchase: charge nothing on top. Any difference at all —
+    // including one caused by the two sources describing the same item slightly
+    // differently — falls back to charging the lot.
+    if (sameSet(flatUpgradeSetOf(soldEa), [...atPurchase].sort())) return ALL_INCLUDED;
+    return null;
+  }
+
+  return null;
 }
+
+/**
+ * "Everything on this item came with it." A sentinel rather than a set of
+ * labels, because a Coflnet fingerprint cannot name individual upgrades — it
+ * can only say the item is the one that was bought.
+ */
+const ALL_INCLUDED = Symbol('all upgrades included in the purchase price');
 
 const RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC', 'DIVINE', 'SPECIAL', 'VERY_SPECIAL'];
 
@@ -194,8 +284,11 @@ export async function buildFlip(row, db, { detail = false } = {}) {
    * — overstating cost rather than profit, which is the only direction this
    * project is willing to be wrong in.
    */
-  const atPurchase = purchase ? await upgradesAtPurchase(purchase.item_bytes, meta, reforges) : null;
-  const upgrades = (ea ? detectUpgrades(ea, meta, reforges) : []).filter((u) => !atPurchase?.has(u.label));
+  const atPurchase = purchase ? await upgradesAtPurchase(purchase, ea, meta, reforges) : null;
+  const upgrades =
+    atPurchase === ALL_INCLUDED
+      ? []
+      : (ea ? detectUpgrades(ea, meta, reforges) : []).filter((u) => !atPurchase?.has(u.label));
 
   let upgradeCost = 0;
   let unpricedUpgrades = 0;
@@ -280,6 +373,9 @@ export async function buildFlip(row, db, { detail = false } = {}) {
           auctionUuid: purchase.auction_id,
           price: purchase.price,
           boughtAt: iso(purchase.bought_at),
+          // Coflnet requires attribution wherever its data is shown, so the UI
+          // has to be able to tell which rows came from there.
+          source: purchase.source ?? 'hypixel',
         }
       : null,
   };

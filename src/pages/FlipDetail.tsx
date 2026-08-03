@@ -86,6 +86,18 @@ export function FlipDetail() {
                   <span className="breakdown-val">{exactCoins(flip.purchase.price)}</span>
                 </div>
               )}
+              {/* Coflnet's terms require attribution wherever their data is
+                  shown. This purchase was recovered from their history, so the
+                  credit belongs on the number it produced. Do not remove. */}
+              {flip.purchase?.source === 'coflnet' && (
+                <p className="sub" style={{ marginTop: 0 }}>
+                  Purchase recovered from{' '}
+                  <a className="link" href="https://sky.coflnet.com" target="_blank" rel="noreferrer noopener">
+                    Coflnet
+                  </a>{' '}
+                  auction history — sky.coflnet.com
+                </p>
+              )}
               {flip.ingredients.map((ing) => (
                 <div className="breakdown-row" key={ing.itemId}>
                   <span className="breakdown-name" title={ing.name}>

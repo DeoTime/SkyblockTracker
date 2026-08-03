@@ -108,10 +108,35 @@ Tracked sales are rare and get logged loudly when they land:
 
 | Variable | Default | Notes |
 |---|---|---|
-| `TRACKED_UUIDS` | s_floW, cloudyv2 | undashed, comma-separated |
+| `TRACKED_UUIDS` | s_floW, cloudyv2 | undashed, comma-separated. Matched on BOTH sides of the feed — sales and purchases |
 | `ENDED_INTERVAL_MS` | `20000` | keep well under the 60s rotation |
 | `BAZAAR_INTERVAL_MS` | `60000` | |
 | `DB_PATH` | `/data/skyblock.db` | inside the named volume |
+
+### Purchase backfill (Coflnet)
+
+The ended-auctions feed records a purchase the moment it happens and cannot see
+one second into the past, so every buy predating this loop is unrecoverable from
+Hypixel. Coflnet keeps auction history, so it can fill that in — which is what
+makes a resold item cost what was *paid* for it rather than what it would cost
+to craft. Off by default.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `COFLNET_BUYS_ENABLED` | off | `1` to backfill past purchases |
+| `COFLNET_INTERVAL_MS` | `600000` | a catch-up pass, not a hot path |
+| `COFLNET_GAP_MS` | `750` | between requests. The limit is 30/10s and 100/min per IP |
+| `COFLNET_MAX_PAGES` | `40` | bids pages per pass, 10 bids each |
+| `COFLNET_MAX_DETAILS` | `60` | auction lookups per pass — the expensive half |
+| `COFLNET_HORIZON_DAYS` | `90` | how far back to walk |
+
+A first run on a busy trader will not finish in one pass. That is intended:
+progress is durable in `coflnet_checked`, so each pass picks up where the last
+left off, and the caps keep the loop inside the rate limit indefinitely.
+
+⚠ Coflnet **requires attribution in the UI**, and commercial use requires
+Premium+. The frontend renders it on any flip costed from a backfilled
+purchase; do not remove it.
 
 ## Backup
 
