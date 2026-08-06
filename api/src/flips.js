@@ -378,6 +378,26 @@ export async function buildFlip(row, db, { detail = false } = {}) {
           source: purchase.source ?? 'hypixel',
         }
       : null,
+    /**
+     * Bought this exact item and sold it straight back on with NOTHING added.
+     *
+     * Both halves matter. `purchase` is already a uuid join — the same physical
+     * item, not merely the same kind — and an empty `upgrades` after the
+     * at-purchase filter means the player put nothing on it between buying and
+     * selling. So this is pure arbitrage: real profit, but not a craft margin,
+     * and it is held out of every aggregate downstream.
+     *
+     * Not derivable from `upgradeCost === 0` on the client, which is why it is
+     * computed here: an anvil reroll has a fixed price of zero, so an item CAN
+     * carry an upgrade that was genuinely applied after purchase and still cost
+     * nothing. That is a modified item and must not read as a straight resell.
+     *
+     * Errs toward NOT flagging. When the purchase NBT is missing or unreadable,
+     * upgradesAtPurchase returns null, every upgrade on the sold item is charged,
+     * and `upgrades` is non-empty — so an item we cannot prove was untouched
+     * stays in the numbers.
+     */
+    resold: purchase !== null && upgrades.length === 0,
   };
 
   if (!detail) return summary;

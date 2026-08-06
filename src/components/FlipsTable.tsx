@@ -101,21 +101,35 @@ export function FlipsTable({ flips, showItemLink = true, onToggleExclude, exclud
         </thead>
         <tbody>
           {sorted.map((f) => (
-            <tr key={f.auctionUuid} style={f.excluded ? { opacity: 0.45 } : undefined}>
+            <tr
+              key={f.auctionUuid}
+              className={f.resold ? 'flip-resold' : undefined}
+              style={f.excluded ? { opacity: 0.45 } : undefined}
+              title={
+                f.resold
+                  ? 'Bought and resold untouched — the same item, nothing added. Never counted in totals or charts.'
+                  : undefined
+              }
+            >
               {onToggleExclude && (
                 <td className="num">
+                  {/* A resold flip is out of the aggregates no matter what this
+                      box says, so it is shown unchecked and locked. Leaving it
+                      checked would claim the row is counted when it is not. */}
                   <input
                     type="checkbox"
-                    checked={!f.excluded}
-                    disabled={excludeDisabled || busyId === f.auctionUuid}
+                    checked={!f.excluded && !f.resold}
+                    disabled={excludeDisabled || f.resold || busyId === f.auctionUuid}
                     onChange={() => onToggleExclude(f, !f.excluded)}
                     title={
-                      f.excluded
-                        ? 'Excluded from calculations — check to include'
-                        : 'Included in calculations — uncheck to exclude'
+                      f.resold
+                        ? 'Bought and resold untouched — always excluded'
+                        : f.excluded
+                          ? 'Excluded from calculations — check to include'
+                          : 'Included in calculations — uncheck to exclude'
                     }
                     aria-label={f.excluded ? `Include ${f.itemName} in calculations` : `Exclude ${f.itemName} from calculations`}
-                    style={{ cursor: excludeDisabled ? 'not-allowed' : 'pointer' }}
+                    style={{ cursor: excludeDisabled || f.resold ? 'not-allowed' : 'pointer' }}
                   />
                 </td>
               )}

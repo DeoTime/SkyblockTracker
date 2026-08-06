@@ -171,7 +171,11 @@ function startSaleWatcher() {
       // Build MTD once for the whole batch (flipOf is cached, so this is cheap
       // after the first pass), then attach the same figures to each sale.
       const start = monthStartUtc();
-      const monthFlips = await mapLimit(qMonth.all(start), FLIP_CONCURRENCY, (r) => flipOf(r));
+      const all = await mapLimit(qMonth.all(start), FLIP_CONCURRENCY, (r) => flipOf(r));
+      // Same rule the dashboard applies: an item bought and resold untouched is
+      // arbitrage, not something they built, and a month-to-date total that
+      // counted it would not match the figure on the site.
+      const monthFlips = all.filter((f) => !f.resold);
       const mtd = { total: monthFlips.reduce((a, f) => a + f.netProfit, 0), count: monthFlips.length };
       const series = profitSeries(monthFlips, start);
       const chartUrl = cfg.chart ? quickChartUrl(cfg.chartBase, series) : null;
@@ -208,7 +212,12 @@ async function dashboard(username, range) {
   // Every aggregate is computed over the INCLUDED flips only — that is what
   // "exclude from calculations" means. The table below still receives the full
   // set (excluded rows marked) so they can be seen and re-included.
-  const counted = flips.filter((f) => !f.excluded);
+  //
+  // `resold` is the automatic half of the same idea: this player bought that
+  // exact item and sold it on untouched, so its margin is arbitrage rather than
+  // anything they built. Unlike an exclusion it is derived per flip and cannot
+  // be toggled off — there is no curation decision to store.
+  const counted = flips.filter((f) => !f.excluded && !f.resold);
 
   return {
     player,

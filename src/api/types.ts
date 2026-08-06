@@ -153,6 +153,14 @@ export interface FlipSummary {
    * feed cannot be backfilled, so early history has no buy side to match.
    */
   purchase?: FlipPurchase | null;
+  /**
+   * Bought this exact item (matched on its NBT uuid) and sold it on with
+   * nothing added to it. Arbitrage rather than a craft margin, so the backend
+   * holds it out of every aggregate automatically — unlike `excluded`, which is
+   * a stored curation decision, this is derived and cannot be toggled. The row
+   * is still listed, and shown red. Absent on older backends, i.e. not resold.
+   */
+  resold?: boolean;
 }
 
 export interface FlipDetail extends FlipSummary {

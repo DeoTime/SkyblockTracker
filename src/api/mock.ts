@@ -248,8 +248,17 @@ function buildPool(): FlipDetail[] {
           }
         : null;
 
-    const upgradeCost = purchase ? 0 : upgrades.reduce((s, u) => s + (u.totalPrice ?? 0), 0);
-    const unpricedUpgrades = purchase ? 0 : upgrades.filter((u) => u.totalPrice === null).length;
+    /**
+     * Of those resells, most are sold on UNTOUCHED — same item, nothing added,
+     * which the backend flags and holds out of every aggregate. The rest were
+     * bought and then upgraded, which is a different animal and still counts.
+     * Both shapes have to render, so the mock produces both.
+     */
+    const resold = purchase !== null && rand() < 0.6;
+    const applied = purchase && !resold ? upgrades : purchase ? [] : upgrades;
+
+    const upgradeCost = applied.reduce((s, u) => s + (u.totalPrice ?? 0), 0);
+    const unpricedUpgrades = applied.filter((u) => u.totalPrice === null).length;
     const costBasis = (purchase ? purchase.price : baseItemCost) + upgradeCost;
 
     const bin = rand() > 0.28;
@@ -286,8 +295,9 @@ function buildPool(): FlipDetail[] {
       priceSource: purchase ? 'own_snapshot' : priceSource,
       bin,
       purchase,
+      resold,
       ingredients: purchase ? [] : ingredients,
-      upgrades: purchase ? [] : upgrades,
+      upgrades: applied,
       metadata: {
         itemId: recipe.itemId,
         name: recipe.itemName,
@@ -346,8 +356,10 @@ function strip(f: FlipDetail): FlipSummary {
 export function mockDashboard(username: string, range: RangeKey): DashboardResponse {
   const cutoff = NOW - RANGE_DAYS[range] * DAY;
   const inRange = POOL.filter((f) => +new Date(f.soldAt) >= cutoff);
-  // Aggregates count only the included flips; the table below keeps the full set.
-  const flips = inRange.filter((f) => !mockExclusions.has(f.auctionUuid));
+  // Aggregates count only the included flips; the table below keeps the full
+  // set. Resold-untouched flips drop out automatically and cannot be toggled
+  // back in — same rule the real backend applies in dashboard().
+  const flips = inRange.filter((f) => !mockExclusions.has(f.auctionUuid) && !f.resold);
 
   const netProfit = sum(flips, (f) => f.netProfit);
   const grossRevenue = sum(flips, (f) => f.salePrice);

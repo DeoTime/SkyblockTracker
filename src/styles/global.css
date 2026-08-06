@@ -602,6 +602,22 @@ span.craft-toggle {
   font-weight: 600;
 }
 
+/* Bought and resold with nothing added — the same physical item, matched on its
+   NBT uuid. Real profit, but arbitrage rather than anything the player built, so
+   it is out of every total and chart. The row stays listed and turns red so the
+   gap between "flips shown" and "flips counted" has a visible cause.
+
+   A tint rather than red text: several cells already carry their own colour
+   (net profit, the blue paid-basis figure), and recolouring those would destroy
+   the meaning they are each carrying. */
+tr.flip-resold > td {
+  background: color-mix(in srgb, var(--critical) 13%, transparent);
+}
+
+tr.flip-resold > td:first-child {
+  box-shadow: inset 3px 0 0 var(--critical);
+}
+
 /* What switching every bazaar ingredient to a buy order takes off the build.
    Same green as .is-cheaper above: both say "this path costs less", and a
    reader should not have to learn two colours for one idea. */
