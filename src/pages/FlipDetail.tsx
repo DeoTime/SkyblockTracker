@@ -3,15 +3,7 @@ import { fetchFlip } from '../api/client';
 import { useAsync } from '../lib/useAsync';
 import { ErrorState, Loading } from '../components/Layout';
 import { HeroFigure } from '../components/Stat';
-import {
-  duration,
-  exactCoins,
-  fullDate,
-  priceSourceLabel,
-  signedCoins,
-  signedPct,
-  titleCase,
-} from '../lib/format';
+import { exactCoins, fullDate, priceSourceLabel, signedCoins, titleCase } from '../lib/format';
 
 export function FlipDetail() {
   const { auctionUuid = '' } = useParams();
@@ -40,11 +32,7 @@ export function FlipDetail() {
 
       <div className="stack">
         <div className="card">
-          <HeroFigure
-            label="Net profit on this flip"
-            value={signedCoins(flip.netProfit)}
-            note={`${signedPct(flip.profitPct)} margin · held ${duration(flip.craftedAt, flip.soldAt)}`}
-          />
+          <HeroFigure label="Net profit on this flip" value={signedCoins(flip.netProfit)} />
           {flip.priceSource !== 'own_snapshot' && (
             <p className="sub" style={{ marginTop: 12 }}>
               ⚠ Pricing confidence: <strong>{priceSourceLabel(flip.priceSource)}</strong>.{' '}
@@ -148,9 +136,6 @@ export function FlipDetail() {
             {flip.upgrades.length > 0 && (
               <div style={{ marginTop: 20 }}>
                 <h2 style={{ marginBottom: 4 }}>Upgrades applied</h2>
-                <p className="sub" style={{ marginTop: 0 }}>
-                  Bought and applied after crafting. Cost basis, not profit.
-                </p>
                 {flip.upgrades.map((u, i) => (
                   <div className="breakdown-row" key={`${u.label}-${i}`}>
                     <span className="breakdown-name">

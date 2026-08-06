@@ -284,8 +284,11 @@ function CraftTree({ plan }: { plan: CraftPlan }) {
             </button>
           </div>
           {spread !== null && spread > 0 && (
-            <span className="card-note">
-              Buy orders save {exactCoins(spread)} on this build — if they fill.
+            /* The title carries what the number means; buy orders only save
+               anything if they actually fill, and that caveat should not be
+               lost just because the label got shorter. */
+            <span className="craft-save" title="What buy orders take off this build — if they fill.">
+              -{exactCoins(spread)}
             </span>
           )}
         </div>

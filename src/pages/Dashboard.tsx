@@ -156,7 +156,6 @@ export function Dashboard() {
               <div className="card-head">
                 <div>
                   <h2>Recent flips</h2>
-                  <p className="sub">Uncheck a flip to exclude it from the totals and charts.</p>
                 </div>
                 <div className="filters" style={{ alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                   <ExcludeBar password={password} onPassword={updatePassword} error={excludeError} />

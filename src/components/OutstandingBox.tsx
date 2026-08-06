@@ -25,7 +25,6 @@ export function OutstandingBox({ username }: { username: string }) {
     <div className="card">
       <div className="card-head">
         <h2>Outstanding listings</h2>
-        {data && <span className="card-note">Expected profit if your listings sell</span>}
       </div>
 
       {loading && <div className="state">Loading…</div>}

@@ -602,6 +602,15 @@ span.craft-toggle {
   font-weight: 600;
 }
 
+/* What switching every bazaar ingredient to a buy order takes off the build.
+   Same green as .is-cheaper above: both say "this path costs less", and a
+   reader should not have to learn two colours for one idea. */
+.craft-save {
+  font-size: 12px;
+  color: var(--good-text);
+  font-weight: 600;
+}
+
 /* One vertical guide per tier, which is what makes the depth readable. */
 .craft-children {
   margin-left: 8px;
