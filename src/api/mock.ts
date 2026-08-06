@@ -17,6 +17,8 @@ import type {
   Ingredient,
   ItemAggregate,
   FlipsPage,
+  ItemBuild,
+  ItemBuildCohort,
   ItemHistoryResponse,
   ListingStatus,
   PendingListing,
@@ -406,31 +408,143 @@ export function mockFlipDetail(auctionUuid: string): FlipDetail {
   return found;
 }
 
+/**
+ * Item history, per build.
+ *
+ * Two properties of the real response are reproduced deliberately, because the
+ * page is mostly about handling them: the cost side spans the whole window
+ * while the market side only reaches back a week, and the newest day is a
+ * partial one. A mock with four complete series would let a regression in the
+ * gap handling through unnoticed.
+ *
+ * The real backend's builds are item-specific (an Aspect of the Void is charted
+ * with and without its Etherwarp Conduit). The catalogue here has no such
+ * notion, so the two builds are the bare item and the item carrying whichever
+ * upgrades it is usually resold with.
+ */
+const MOCK_MARKET_DAYS = 7;
+const MOCK_WINDOW_DAYS = 24;
+
 export function mockItemHistory(itemId: string): ItemHistoryResponse {
   const recipe = RECIPES.find((r) => r.itemId === itemId);
   if (!recipe) throw new ApiError(`No item ${itemId}`, 404);
 
   const rand = rng(hash(itemId));
   const baseCost = recipe.ingredients.reduce((s, x) => s + x.unit * x.quantity, 0);
-  const points = [];
-  let cost = baseCost;
-  let market = recipe.sale;
+  const priced = (recipe.upgrades ?? []).filter((u) => u.unit !== null);
+  const upgradeCost = priced.reduce((s, u) => s + (u.unit ?? 0) * u.quantity, 0);
 
-  for (let d = 89; d >= 0; d--) {
-    cost *= 0.985 + rand() * 0.03;
-    market *= 0.985 + rand() * 0.03;
-    points.push({
-      date: new Date(NOW - d * DAY).toISOString().slice(0, 10),
-      craftCost: Math.round(cost),
-      marketPrice: Math.round(market),
+  const dates: string[] = [];
+  for (let d = MOCK_WINDOW_DAYS - 1; d >= 0; d--) {
+    dates.push(new Date(NOW - d * DAY).toISOString().slice(0, 10));
+  }
+  const today = dates[dates.length - 1];
+  const marketFrom = dates[Math.max(0, dates.length - MOCK_MARKET_DAYS)];
+
+  // One walk, shared: both builds are the same sword plus or minus its
+  // upgrades, so their series have to move together rather than drift apart.
+  const walk = dates.map(() => ({ cost: 0.985 + rand() * 0.03, market: 0.985 + rand() * 0.03 }));
+
+  const buildOf = (
+    key: string,
+    label: string,
+    description: string,
+    cost0: number,
+    market0: number,
+    components: { itemId: string; name: string; quantity: number }[],
+    cohort: ItemBuildCohort,
+    salesPerDay: number,
+  ): ItemBuild => {
+    let cost = cost0;
+    let market = market0;
+
+    const points = dates.map((date, i) => {
+      cost *= walk[i].cost;
+      market *= walk[i].market;
+      const inWindow = date >= marketFrom;
+      const partial = date === today;
+      return {
+        date,
+        marketPrice: inWindow ? Math.round(market) : null,
+        sales: inWindow ? (partial ? Math.max(1, Math.round(salesPerDay / 6)) : salesPerDay) : 0,
+        craftCost: Math.round(cost),
+        estimated: i < 2, // the oldest days lean on the nearest snapshot held
+        partial,
+      };
     });
+
+    const both = points.filter((p) => p.marketPrice !== null && p.craftCost !== null);
+    const last = [...both].reverse().find((p) => !p.partial) ?? both[both.length - 1];
+
+    return {
+      key,
+      label,
+      description,
+      cohort,
+      components,
+      points,
+      salesMatched: points.reduce((n, p) => n + p.sales, 0),
+      latest: last
+        ? {
+            date: last.date,
+            marketPrice: last.marketPrice as number,
+            craftCost: last.craftCost as number,
+            spread: (last.marketPrice as number) - (last.craftCost as number),
+            marginPct: +((((last.marketPrice as number) - (last.craftCost as number)) / (last.craftCost as number)) * 100).toFixed(1),
+          }
+        : null,
+      profitableDays: both.filter((p) => (p.marketPrice as number) > (p.craftCost as number)).length,
+      comparableDays: both.length,
+    };
+  };
+
+  const self = { itemId, name: recipe.itemName, quantity: 1 };
+
+  const builds: ItemBuild[] = [
+    buildOf(
+      'clean',
+      'Clean',
+      `A bare ${recipe.itemName}, straight off the crafting grid.`,
+      baseCost,
+      recipe.sale,
+      [self],
+      { match: 'exact', upgrades: [], excludes: [], enchants: [] },
+      42,
+    ),
+  ];
+
+  if (priced.length > 0) {
+    builds.push(
+      buildOf(
+        'upgraded',
+        `${recipe.itemName} + upgrades`,
+        `${recipe.itemName} carrying ${priced.map((u) => u.label).join(', ')}.`,
+        baseCost + upgradeCost,
+        recipe.sale * 1.34,
+        [...priced.map((u) => ({ itemId: u.label, name: u.label, quantity: u.quantity })), self],
+        { match: 'exact', upgrades: priced.map((u) => u.kind), excludes: ['rarity_upgrades'], enchants: [] },
+        11,
+      ),
+    );
   }
 
   return {
     itemId,
     itemName: recipe.itemName,
     rarity: recipe.rarity,
-    points,
+    dates,
+    builds,
+    coverage: {
+      marketDays: MOCK_MARKET_DAYS,
+      marketFrom: `${marketFrom}T00:00:00.000Z`,
+      marketTo: new Date(NOW).toISOString(),
+      salesScanned: builds.reduce((n, b) => n + b.salesMatched, 0),
+      truncated: false,
+      marketError: null,
+      fetchedAt: new Date(NOW).toISOString(),
+      costEstimatedDays: 2,
+    },
+    attribution: 'Sales data from Coflnet — sky.coflnet.com',
     // Every flip of this item, not a truncated sample — the page claims to show
     // "your flips of this item" and must not quietly drop some.
     flips: POOL.filter((f) => f.itemId === itemId).map(strip),

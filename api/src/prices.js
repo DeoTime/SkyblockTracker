@@ -22,6 +22,37 @@ const FRESH_WINDOW_MS = 6 * 60 * 60 * 1000;
 /** Items that only ever exist upgraded — see the fallback in auction(). */
 const AUCTION_ONLY = new Set(['ETHERWARP_CONDUIT', 'ETHERWARP_MERGER']);
 
+/**
+ * Items priced from a rolling AVERAGE of what sold, not the cheapest listing.
+ *
+ * The Etherwarp Merger is the whole reason this exists. It is one of the two
+ * big lines on an etherwarped Aspect of the Void and it trades only a handful
+ * of times an hour, so `min_price` of the nearest bucket is whatever one lucky
+ * listing went for — a number that jumps hundreds of thousands of coins between
+ * adjacent days without the market having moved, and jumps in the direction
+ * that understates cost and overstates margin. Averaging every sale over a
+ * rolling day is both steadier and closer to what a buyer actually pays.
+ *
+ * Deliberately NOT the Etherwarp Conduit, despite the same thin market: it has
+ * a recipe, so costOf() prices it from ingredients and never reaches this path.
+ * Adding it here would change nothing and imply otherwise.
+ */
+const ROLLING_MEAN = new Set(['ETHERWARP_MERGER']);
+
+/** Length of that rolling window. */
+const ROLLING_HOURS = 24;
+
+/**
+ * Widened window for ownBuyMean() when the ordinary one is empty.
+ *
+ * A component bought a few times a week has no purchase in most single days,
+ * and a cost line that is null four days in five is not a line. Two days is the
+ * smallest widening that meaningfully helps while still being recent enough to
+ * describe the day it is charted against; the days that use it are marked
+ * `live_fallback` so they read as estimated rather than measured.
+ */
+const ROLLING_FALLBACK_HOURS = 48;
+
 const HOUR = 3600_000;
 const hourOf = (ms) => Math.floor(ms / HOUR);
 
@@ -31,10 +62,16 @@ export class PriceBook {
    * @param at      epoch ms the prices should be "as of"
    * @param opts.live  optional { bazaar: Map<id,number>, auction: Map<id,number> }
    *                   used only when history has no answer at all
+   * @param opts.ownBuys  item ids to price ONLY from what a tracked player
+   *                   actually paid — see ownBuyMean(). Opt-in per book,
+   *                   because it answers a different question than the market
+   *                   price and is null far more often.
    */
   constructor(db, at, opts = {}) {
     this.at = at;
     this.live = opts.live ?? null;
+    this.ownBuys = new Set(opts.ownBuys ?? []);
+    this.db = db;
     this.sources = new Map();
 
     this.qBazaarBefore = db.prepare(
@@ -53,6 +90,10 @@ export class PriceBook {
     this.qRollupAny = db.prepare(
       `SELECT min_price, sum_price, sales, hour FROM price_rollup
         WHERE item_id = ? AND is_clean = ? ORDER BY ABS(hour - ?) ASC LIMIT 1`,
+    );
+    this.qRollupMean = db.prepare(
+      `SELECT SUM(sum_price) AS sum, SUM(sales) AS sales FROM price_rollup
+        WHERE item_id = ? AND is_clean = ? AND hour BETWEEN ? AND ?`,
     );
 
     this.bazaar = this.bazaar.bind(this);
@@ -97,13 +138,107 @@ export class PriceBook {
   }
 
   /**
+   * Mean of what a TRACKED player actually PAID for `itemId` over the
+   * ROLLING_HOURS ending at `at` — not what the market charged anyone.
+   *
+   * `tracked_buys` is entirely our own players' purchases by construction: the
+   * live feed only writes a row when the buyer is tracked, and the Coflnet
+   * backfill only ever walks a tracked player's own bids. So the table needs no
+   * buyer predicate — every row in it already qualifies. Not narrowed to one
+   * player: the chart is not per-player, and splitting it would halve an
+   * already thin sample.
+   *
+   * A day with no purchase widens to ROLLING_FALLBACK_HOURS before giving up.
+   * The wider window is a superset, so it is only ever consulted when the
+   * ordinary one found nothing, and it is marked `live_fallback` — the number
+   * is real but it describes two days rather than the one it is charted on.
+   *
+   * STRICT past that. Null means "no tracked player bought one in either
+   * window", and the caller must treat it as no price rather than reaching for
+   * the market — falling back there would quietly restore the all-sales number
+   * this exists to replace, on exactly the days it was asked not to.
+   */
+  ownBuyMean(itemId) {
+    try {
+      // Prepared lazily: the API and the ingest deploy separately, so an API
+      // running ahead of the ingest meets a database with no tracked_buys at
+      // all, and a missing table throws at prepare time, not at call time.
+      this.qOwnBuyMean ??= this.db.prepare(
+        `SELECT AVG(price) AS mean, COUNT(*) AS n FROM tracked_buys
+          WHERE item_id = ? AND bought_at BETWEEN ? AND ?`,
+      );
+
+      for (const [hours, source] of [
+        [ROLLING_HOURS, 'own_snapshot'],
+        [ROLLING_FALLBACK_HOURS, 'live_fallback'],
+      ]) {
+        const row = this.qOwnBuyMean.get(itemId, this.at - hours * HOUR, this.at);
+        if (row?.n) {
+          this.note(itemId, source);
+          return Math.round(row.mean);
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Mean sale price over the ROLLING_HOURS ending at `at`, or null if nothing
+   * sold in that window.
+   *
+   * Weighted by sales rather than by hour — an hour that saw six sales should
+   * count six times as much as one that saw a single sale, and summing the
+   * hourly means instead would let the quietest hour of the day set the price.
+   * `sum_price / sales` over the range is exactly the mean of the individual
+   * sales in it.
+   *
+   * Trailing, not centred: the newest point's anchor is "now", so a centred
+   * window there would be half empty and would draw on a different span than
+   * every other point on the same line.
+   */
+  rollingMean(itemId, flag) {
+    const h = hourOf(this.at);
+    const row = this.qRollupMean.get(itemId, flag, h - (ROLLING_HOURS - 1), h);
+    // SUM over no rows is a row of nulls, not an absent row.
+    if (!row?.sales) return null;
+    return Math.round(row.sum / row.sales);
+  }
+
+  /**
    * Cheapest CLEAN auction sale near `at`, from the hourly rollup.
    * `clean = false` prices upgraded variants (used for auction-only upgrades
    * like the Etherwarp Conduit, which are never "clean" in the base sense).
+   *
+   * Two exceptions to "cheapest", in priority order:
+   *
+   *   opts.ownBuys   priced from our own purchases alone, and NOT backstopped —
+   *                  see ownBuyMean(). Returns before everything below it.
+   *   ROLLING_MEAN   averaged over a rolling day of everyone's sales, but still
+   *                  backstopped, so an empty window falls through to the
+   *                  ordinary nearest-bucket answer rather than to no price.
+   *
+   * Everything else about the lookup — the freshness downgrade, the clean/dirty
+   * fallback — is unchanged.
    */
   auction(itemId, { clean = true, windowHours = 72 } = {}) {
     const h = hourOf(this.at);
     const flag = clean ? 1 : 0;
+
+    // Deliberately unconditional: null here is an answer, not a miss.
+    // tracked_buys has no clean/dirty split, so the flag does not apply.
+    if (this.ownBuys.has(itemId)) return this.ownBuyMean(itemId);
+
+    if (ROLLING_MEAN.has(itemId)) {
+      const mean = this.rollingMean(itemId, flag);
+      if (mean !== null) {
+        // Not downgraded for age: spanning a day is the point of this number,
+        // not evidence that the reading is stale.
+        this.note(itemId, 'own_snapshot');
+        return mean;
+      }
+    }
 
     let row = this.qRollup.get(itemId, flag, h - windowHours, h + windowHours, h);
     let source = 'own_snapshot';

@@ -150,6 +150,11 @@ export function unclassifiedKeysOf(auction) {
  *   exact    — this upgrade set and nothing else. The bare-sword baseline.
  *   contains — at least these upgrades; anything extra is allowed.
  *
+ * `excludes` bans specific upgrades from either mode. Under `exact` it is
+ * redundant by construction and kept anyway, because a cohort that means "and
+ * definitely not recombobulated" should say so rather than rely on a reader
+ * deriving it from the match mode.
+ *
  * The two modes answer different questions and the difference is not cosmetic.
  * `exact` on a built sword is a trap: measured over 2,000 sales on 2026-07-26,
  * `ethermerge + rarity_upgrades` exactly occurs ZERO times, because every
@@ -185,7 +190,7 @@ export const COHORTS = [
 const sameSet = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** Does one sale belong to `cohort`? */
-function matches(sale, cohort) {
+export function matchesCohort(sale, cohort) {
   const levels = enchantLevelsOf(sale);
   for (const e of cohort.enchants ?? []) {
     if ((levels.get(e.type) ?? -1) < e.level) return false;
@@ -193,6 +198,10 @@ function matches(sale, cohort) {
 
   const have = upgradeSetOf(sale);
   const want = [...cohort.upgrades].sort();
+
+  for (const u of cohort.excludes ?? []) {
+    if (have.includes(u)) return false;
+  }
 
   if (cohort.match === 'contains') return want.every((u) => have.includes(u));
 
@@ -249,6 +258,82 @@ async function fetchSold(tag, sinceMs) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Cached sold feed                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The raw sold feed, cached, shared by every consumer of it.
+ *
+ * The cache sits HERE — on the Coflnet pages — rather than on any one derived
+ * series, because two pages now ask the same question of the same feed: /sales
+ * wants hourly volume per cohort, and the item history wants daily medians per
+ * build. Caching each derived answer separately would fetch the same eight
+ * pages twice and halve the headroom under a 100 req/min limit.
+ *
+ * Everything downstream is pure CPU over a few thousand rows, so recomputing a
+ * series per request costs nothing worth caching.
+ *
+ * Five minutes is short relative to the hour a bar covers, so the only bucket a
+ * stale serve can understate is the one still filling — which the series marks
+ * as partial anyway.
+ */
+const FRESH_MS = 5 * 60_000;
+const STALE_MS = 60 * 60_000;
+const MAX_ENTRIES = 16; // ?item= is caller-controlled
+
+const soldCache = new Map(); // key -> { at, value }; insertion-ordered
+const soldInflight = new Map();
+
+function sharedSold(key, tag, sinceMs) {
+  const pending = soldInflight.get(key);
+  if (pending) return pending;
+
+  const p = fetchSold(tag, sinceMs)
+    .then((value) => {
+      // Re-insert at the tail so a key still in use is not the one evicted.
+      soldCache.delete(key);
+      soldCache.set(key, { at: Date.now(), value });
+      while (soldCache.size > MAX_ENTRIES) soldCache.delete(soldCache.keys().next().value);
+      return value;
+    })
+    .finally(() => soldInflight.delete(key));
+
+  soldInflight.set(key, p);
+  return p;
+}
+
+/**
+ * Every sale of `itemId` inside the last `days`, from cache when it is warm.
+ *
+ * Fresh -> serve. Stale -> serve the old copy and refresh behind the request.
+ * Older than STALE_MS (or nothing cached) -> fetch and wait.
+ *
+ * `fetchedAt` is when Coflnet was actually read, which is what callers report as
+ * the age of their numbers. A window is re-fetched from `days` ago at read time,
+ * so a cached entry covers slightly more history than its key claims; callers
+ * bucket by their own grid and drop what falls outside it.
+ */
+export async function cachedSold({ itemId = 'ASPECT_OF_THE_VOID', days = 7 } = {}) {
+  const key = `${itemId}:${days}`;
+  const since = Date.now() - days * 86_400_000;
+  const hit = soldCache.get(key);
+  const age = hit ? Date.now() - hit.at : Infinity;
+
+  if (hit && age < FRESH_MS) return { ...hit.value, fetchedAt: hit.at };
+
+  if (hit && age < STALE_MS) {
+    // Fire and forget: a failed refresh must not reject this request or take the
+    // process down as an unhandled rejection. The stale copy is still an answer.
+    sharedSold(key, itemId, since).catch((err) =>
+      console.error(`sales: background refresh of ${key} failed: ${err.message}`),
+    );
+    return { ...hit.value, fetchedAt: hit.at };
+  }
+
+  return { ...(await sharedSold(key, itemId, since)), fetchedAt: Date.now() };
+}
+
+/* ------------------------------------------------------------------ */
 /* Series                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -257,7 +342,7 @@ const HOUR_MS = 3_600_000;
 /** The UTC hour a sale falls in, as a parseable stamp: 2026-07-26T14:00:00Z. */
 const hourOf = (ms) => `${new Date(Math.floor(ms / HOUR_MS) * HOUR_MS).toISOString().slice(0, 13)}:00:00Z`;
 
-const median = (xs) => {
+export const median = (xs) => {
   if (xs.length === 0) return null;
   const s = [...xs].sort((a, b) => a - b);
   const m = s.length >> 1;
@@ -283,14 +368,19 @@ export async function salesVolume({ itemId = 'ASPECT_OF_THE_VOID', days = 7 } = 
   const currentHour = Math.floor(now / HOUR_MS) * HOUR_MS;
   const since = currentHour - (hours - 1) * HOUR_MS;
 
-  const { sales, pages, truncated } = await fetchSold(itemId, since);
+  const { sales: fetched, pages, truncated, fetchedAt } = await cachedSold({ itemId, days });
+  // A cached window was cut from `days` ago at FETCH time, so it reaches further
+  // back than this grid does. Trim to the grid rather than letting sales with no
+  // bucket be silently dropped by the lookup below — the coverage figures below
+  // report what was counted, and they have to describe the same set.
+  const sales = fetched.filter((s) => s.soldAt >= since);
 
   const hourKeys = [];
   for (let i = 0; i < hours; i++) hourKeys.push(hourOf(since + i * HOUR_MS));
   const openHour = hourOf(currentHour);
 
   const cohorts = COHORTS.map((c) => {
-    const matched = sales.filter((s) => matches(s, c));
+    const matched = sales.filter((s) => matchesCohort(s, c));
 
     const byHour = new Map(hourKeys.map((h) => [h, []]));
     for (const s of matched) {
@@ -351,64 +441,18 @@ export async function salesVolume({ itemId = 'ASPECT_OF_THE_VOID', days = 7 } = 
     // Empty is the healthy state. A key here is a possible cost-bearing upgrade
     // nobody has classified yet — see MARKET.md §3.1.
     unclassifiedKeys: [...unclassified].sort(),
+    // How old the Coflnet read behind these numbers is. Derived at serve time
+    // rather than baked in, because the same cached feed is handed to several
+    // requests over several minutes and each needs the age as of its moment.
+    cachedAgeSeconds: Math.max(0, Math.round((now - fetchedAt) / 1000)),
     attribution: 'Sales data from Coflnet — sky.coflnet.com',
   };
 }
 
-/* ------------------------------------------------------------------ */
-/* Cache                                                               */
-/* ------------------------------------------------------------------ */
-
 /**
- * Several sequential Coflnet pages per call, against a rate-limited third
- * party. Same stale-while-revalidate shape as craft.js: serve the cached
- * series and refresh behind the request, so a visitor never waits on Coflnet
- * and we never hammer it.
- *
- * Five minutes is short relative to the hour a bar covers, so the only bar a
- * stale serve can understate is the one still filling — which the point marks
- * as partial anyway.
+ * Kept as the endpoint's entry point. The caching it used to do itself now
+ * happens one level down, on the Coflnet pages (see cachedSold) — bucketing a
+ * few thousand cached rows is not work worth memoising, and sharing the cache
+ * with the item history is worth more than skipping it.
  */
-const FRESH_MS = 5 * 60_000;
-const STALE_MS = 60 * 60_000;
-const MAX_ENTRIES = 16; // ?item= is caller-controlled
-
-const cache = new Map();
-const inflight = new Map();
-
-function shared(key, opts) {
-  const pending = inflight.get(key);
-  if (pending) return pending;
-
-  const p = salesVolume(opts)
-    .then((value) => {
-      cache.delete(key);
-      cache.set(key, { at: Date.now(), value });
-      while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value);
-      return value;
-    })
-    .finally(() => inflight.delete(key));
-
-  inflight.set(key, p);
-  return p;
-}
-
-export async function cachedSalesVolume({ itemId = 'ASPECT_OF_THE_VOID', days = 7 } = {}) {
-  const key = `${itemId}:${days}`;
-  const hit = cache.get(key);
-  const age = hit ? Date.now() - hit.at : Infinity;
-
-  const stamp = (v) => ({ ...v, cachedAgeSeconds: Math.round((Date.now() - (hit?.at ?? Date.now())) / 1000) });
-
-  if (hit && age < FRESH_MS) return stamp(hit.value);
-
-  if (hit && age < STALE_MS) {
-    shared(key, { itemId, days }).catch((err) =>
-      console.error(`sales: background refresh of ${key} failed: ${err.message}`),
-    );
-    return stamp(hit.value);
-  }
-
-  const fresh = await shared(key, { itemId, days });
-  return { ...fresh, cachedAgeSeconds: 0 };
-}
+export const cachedSalesVolume = salesVolume;

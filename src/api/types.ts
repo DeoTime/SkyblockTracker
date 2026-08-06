@@ -259,17 +259,92 @@ export interface PendingResponse {
   };
 }
 
+/**
+ * One day of one BUILD's history. Both numbers are nullable and for different
+ * reasons, and the difference matters when reading a gap in the chart:
+ *
+ *   marketPrice null  no sale of this exact build that day — usually because
+ *                     the day is outside Coflnet's 7-day window, which is much
+ *                     shorter than the span the cost side reaches
+ *   craftCost   null  a component could not be priced at all, so the sum was
+ *                     suppressed rather than reported partial
+ */
 export interface ItemHistoryPoint {
   date: string;
-  craftCost: number;
-  marketPrice: number;
+  /** Median sale price of this build that day. Median, so one overpay cannot move it. */
+  marketPrice: number | null;
+  /** Sales behind that median. Single digits mean a soft number, not a price move. */
+  sales: number;
+  /** What building one cost at that day's ingredient prices. */
+  craftCost: number | null;
+  /**
+   * An ingredient was priced from outside this day: the nearest snapshot held
+   * when none sat near it, or a widened purchase window for a part bought too
+   * rarely to have one every day.
+   */
+  estimated: boolean;
+  /** The day still in progress — a fraction of a day's sales. */
+  partial: boolean;
+}
+
+/**
+ * How a build's sales were picked out of the feed. Shown, not just applied: the
+ * whole claim of the chart is that the price and the cost describe the same
+ * sword, and this is the definition the reader has to be able to check.
+ */
+export interface ItemBuildCohort {
+  match: 'exact' | 'contains';
+  upgrades: string[];
+  excludes: string[];
+  enchants: { type: string; level: number }[];
+}
+
+export interface ItemBuild {
+  key: string;
+  label: string;
+  description: string;
+  cohort: ItemBuildCohort;
+  /** The bill of materials the craft cost sums — the base item plus its upgrades. */
+  components: { itemId: string; name: string; quantity: number }[];
+  points: ItemHistoryPoint[];
+  /** Sales matching this build across the whole market window. */
+  salesMatched: number;
+  /** The newest complete day with both numbers, or null when no day has both. */
+  latest: {
+    date: string;
+    marketPrice: number;
+    craftCost: number;
+    spread: number;
+    marginPct: number | null;
+  } | null;
+  /** Days crafting beat the going rate, out of the days both numbers exist for. */
+  profitableDays: number;
+  comparableDays: number;
 }
 
 export interface ItemHistoryResponse {
   itemId: string;
   itemName: string;
   rarity: Rarity;
-  points: ItemHistoryPoint[];
+  /** The shared x-axis. Every build's points line up with this, nulls included. */
+  dates: string[];
+  builds: ItemBuild[];
+  coverage: {
+    /** How far back the market side can see. Coflnet's free tier caps this. */
+    marketDays: number;
+    marketFrom: string | null;
+    marketTo: string | null;
+    salesScanned: number;
+    /** The page cap was hit before the window closed, so the oldest day is short. */
+    truncated: boolean;
+    /** Non-null when Coflnet could not be reached; the cost lines still drew. */
+    marketError: string | null;
+    fetchedAt: string;
+    /** Days whose craft cost leans on the nearest snapshot rather than a local one. */
+    costEstimatedDays: number;
+  };
+  /** Coflnet requires attribution wherever its data is shown. Render it. */
+  attribution: string;
   /** Flips of this item by the player currently in context. */
   flips: FlipSummary[];
 }

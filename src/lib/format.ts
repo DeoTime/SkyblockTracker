@@ -59,10 +59,21 @@ function trim(v: number, digits: number): string {
     .replace(/(\.\d*?)0+$/, '$1');
 }
 
+/**
+ * "Jul 21" for a calendar day.
+ *
+ * A bare `YYYY-MM-DD` is parsed as UTC midnight, so formatting it in the
+ * reader's zone renames every day west of Greenwich to the one before it — a
+ * chart bucketed by UTC day would have had every label off by one. Date-only
+ * strings are therefore formatted in UTC, which is the zone they were written
+ * in. Anything with a time in it is a real instant and stays local.
+ */
 export function shortDate(iso: string): string {
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(iso);
   return new Date(iso).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
+    ...(dateOnly ? { timeZone: 'UTC' } : {}),
   });
 }
 

@@ -1,9 +1,9 @@
 import http from 'node:http';
 import Database from 'better-sqlite3';
 import { buildFlip, buildPending, summarizePending, summarize, profitSeries, byItem, rangeStart } from './flips.js';
-import { itemMetadata } from './prices.js';
 import { craftPlan, variantKeys } from './craft.js';
 import { cachedSalesVolume } from './sales.js';
+import { itemSeries } from './history.js';
 import { sweep, playerAuctions } from './sweep.js';
 import {
   loadSaleNotifyConfig,
@@ -77,10 +77,6 @@ const qSales = db.prepare(
 const qSale = db.prepare('SELECT * FROM tracked_sales WHERE auction_id = ?');
 const qItemSales = db.prepare(
   `SELECT * FROM tracked_sales WHERE item_id = ? AND (? IS NULL OR seller = ?) ORDER BY sold_at DESC`,
-);
-const qItemHistory = db.prepare(
-  `SELECT hour, min_price, sum_price, sales FROM price_rollup
-    WHERE item_id = ? AND is_clean = 1 ORDER BY hour ASC`,
 );
 
 /**
@@ -432,36 +428,18 @@ async function flipDetail(auctionUuid) {
 }
 
 async function itemHistory(itemId, username) {
-  const meta = (await itemMetadata()).get(itemId);
   const player = username ? await resolvePlayer(username) : null;
-
-  const rows = qItemHistory.all(itemId);
-  const byDay = new Map();
-  for (const r of rows) {
-    const date = new Date(r.hour * 3600_000).toISOString().slice(0, 10);
-    const d = byDay.get(date) ?? { sum: 0, sales: 0 };
-    d.sum += r.sum_price;
-    d.sales += r.sales;
-    byDay.set(date, d);
-  }
-
   const uuid = player?.uuid ?? null;
-  const flips = await mapLimit(qItemSales.all(itemId, uuid, uuid), FLIP_CONCURRENCY, (r) => flipOf(r));
 
-  return {
-    itemId,
-    itemName: meta?.name ?? itemId,
-    rarity: meta?.tier ?? 'COMMON',
-    points: [...byDay.entries()].map(([date, d]) => ({
-      date,
-      // We store realised sale prices, not craft costs, per hour. Reconstructing
-      // a historical craft cost per day would mean re-costing the recipe at
-      // every point; null is honest until that job exists.
-      craftCost: null,
-      marketPrice: Math.round(d.sum / d.sales),
-    })),
-    flips,
-  };
+  // The series are Coflnet + recipe recursion, the flips are NBT decoding; they
+  // touch nothing in common, so there is no reason to run them one after the
+  // other.
+  const [series, flips] = await Promise.all([
+    itemSeries({ db, itemId }),
+    mapLimit(qItemSales.all(itemId, uuid, uuid), FLIP_CONCURRENCY, (r) => flipOf(r)),
+  ]);
+
+  return { ...series, flips };
 }
 
 /* ---- plumbing ------------------------------------------------------- */
